@@ -1,0 +1,1092 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dungeon Master</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+
+  <style>
+    /* 耀光装备CD和指示器 */
+    .equipment-slot {
+      position: relative;
+    }
+    
+    .spellblade-cd {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background-color: rgba(0, 0, 0, 0.6);
+      transition: height 0.1s linear;
+      pointer-events: none;
+    }
+    
+    .spellblade-ready {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: #4CAF50;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+    
+    .spellblade-ready.active {
+      opacity: 1;
+    }
+    
+    @keyframes spellblade-flash {
+      0% { filter: brightness(1); }
+      50% { filter: brightness(1.5); }
+      100% { filter: brightness(1); }
+    }
+    
+    .spellblade-trigger {
+      animation: spellblade-flash 0.2s ease-out;
+    }
+    @font-face {
+      font-family: "Zpix";
+      src: url("font/zpix.ttf") format("truetype");
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #0c0912;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: sans-serif;
+      font-family: "Zpix", sans-serif;
+    }
+
+    .frame {
+      border: 2px solid #fff;
+      padding: 12px;
+      box-sizing: content-box;
+      display: inline-block;
+      transform-origin: center center;
+    }
+
+    .root {
+      width: 853px;
+      height: 640px;
+      position: relative;
+    }
+
+    .panel {
+      position: absolute;
+      background: #000;
+      border: 2px solid #fff;
+      box-sizing: border-box;
+    }
+
+    .game-border {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 640px;
+      height: 480px;
+      border: 2px solid #fff;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+
+    #game {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 640px;
+      height: 480px;
+      image-rendering: pixelated;
+      border: none;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+
+    .sidebar {
+      left: 640px;
+      top: 0;
+      width: 213px;
+      height: 480px;
+    }
+
+    .sidebar-content {
+      width: 100%;
+      height: 100%;
+      padding: 16px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      color: #fff;
+      font-family: "Zpix", monospace;
+      font-size: 12px;
+    }
+
+    .sidebar-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sidebar-stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+      padding-bottom: 6px;
+    }
+
+    .sidebar-stat-label {
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .sidebar-stat-value {
+      font-size: 16px;
+    }
+
+    .bottom-bar {
+      left: 0;
+      top: 480px;
+      width: 853px;
+      height: 160px;
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      padding: 12px;
+      gap: 12px;
+      position: relative;
+    }
+
+    .bottom-divider {
+      position: absolute;
+      top: 12px;
+      bottom: 12px;
+      left: 640px;
+      border-left: 2px solid #fff;
+      opacity: 0.6;
+      pointer-events: none;
+    }
+
+    .bottom-stats-center {
+      position: relative;
+      flex: 0 0 640px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-start;
+      gap: 12px;
+      height: 100%;
+      padding: 0 12px;
+      box-sizing: border-box;
+    }
+
+    .bar-wrapper {
+      width: 100%;
+      height: 16px;
+      border: 2px solid #fff;
+      box-sizing: border-box;
+      position: relative;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .skill-resource {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      margin-left: 8px;
+    }
+
+    .resource-column {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      box-sizing: border-box;
+      width: calc(56px * 4 + 12px * 3);
+    }
+
+    .skill-row {
+      display: flex;
+      gap: 12px;
+      width: calc(56px * 4 + 12px * 3);
+    }
+
+    .skill-slot {
+      width: 56px;
+      height: 56px;
+      border: 2px solid #fff;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-family: "Zpix", monospace;
+      font-size: 14px;
+      background: rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+    }
+
+    .skill-label {
+      position: absolute;
+      top: 4px;
+      left: 6px;
+      font-size: 11px;
+    }
+
+    .skill-name {
+      font-size: 11px;
+    }
+
+    .skill-slot.space .skill-name {
+      position: absolute;
+      bottom: 4px;
+      left: 6px;
+      font-size: 12px;
+      pointer-events: none;
+    }
+
+    .cooldown-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      opacity: 1;
+      pointer-events: none;
+    }
+
+    .cooldown-timer {
+      color: #fff;
+      font-size: 14px;
+      font-weight: bold;
+    }
+
+    .equipment-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 54px);
+      grid-auto-rows: 54px;
+      gap: 12px;
+      position: absolute;
+      left: 360px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .equipment-slot {
+      position: relative;
+      width: 54px;
+      height: 54px;
+      border: 2px solid #fff;
+      background: rgba(255, 255, 255, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: default;
+      user-select: none;
+    }
+
+    .equipment-slot .slot-id {
+      position: absolute;
+      top: 4px;
+      left: 6px;
+      font-size: 10px;
+      color: #fff;
+      font-family: "Zpix", monospace;
+    }
+
+    .equipment-stack-badge {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      min-width: 16px;
+      padding: 1px 3px;
+      border: 1px solid rgba(0, 0, 0, 0.85);
+      border-radius: 3px;
+      background: rgba(0, 0, 0, 0.9);
+      color: #fff;
+      font-family: "Zpix", monospace;
+      font-size: 10px;
+      line-height: 1.2;
+      text-align: center;
+      display: none;
+      pointer-events: none;
+      text-shadow:
+        -1px 0 0 #000,
+        1px 0 0 #000,
+        0 -1px 0 #000,
+        0 1px 0 #000;
+    }
+
+    .equipment-stack-badge.active {
+      display: inline-block;
+    }
+
+    .equipment-slot.has-item {
+      cursor: grab;
+    }
+
+    .equipment-slot.dragging {
+      opacity: 0.5;
+    }
+
+    .equipment-slot.drag-over {
+      outline: 2px dashed rgba(255, 255, 255, 0.6);
+      outline-offset: -2px;
+    }
+
+    .equipment-icon {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+      pointer-events: none;
+    }
+
+    /* 技能图标 */
+    .skill-icon {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      display: block;
+      transition: opacity 0.2s linear;
+    }
+
+    .equipment-slot.has-item .equipment-icon {
+      display: block;
+    }
+
+    .equipment-preview-slot {
+      width: 54px;
+      height: 54px;
+      border: 2px solid #fff;
+      background: rgba(255, 255, 255, 0.05);
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .equipment-preview-slot.active {
+      display: flex;
+    }
+
+    .equipment-preview-slot img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+    }
+
+    .sidebar-equipment-details {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      color: #fff;
+      font-family: "Zpix", monospace;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .sidebar-equipment-title {
+      font-size: 14px;
+      color: #ffd966;
+    }
+
+    .sidebar-equipment-hint {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 11px;
+    }
+
+    .bottom-stats-side {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 16px;
+      align-content: center;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: red;
+    }
+
+    .bar-fill.mana {
+      background: #1666ff;
+    }
+
+    .bar-label {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      font-family: "Zpix", monospace;
+      font-size: 12px;
+    }
+
+    .stat-line {
+      color: #fff;
+      font-family: "Zpix", monospace;
+      font-size: 12px;
+      text-align: left;
+      display: inline-block;
+    }
+/* 仅覆盖 shop-overlay 的样式，其余保持不变 */
+.shop-overlay {
+  position: absolute;
+  left: 0;              /* 锁定到主界面左上角 */
+  top: 0;
+  width: 640px;         /* 主界面宽 */
+  height: 480px;        /* 主界面高 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 6, 12, 0.85);
+  /* 不再使用极高的 z-index，避免“悬浮在所有界面之上” */
+  z-index: 1;           /* 仅盖住 #game 即可 */
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.shop-overlay.visible {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* 维持面板尺寸，确保在 640×480 内合适居中 */
+.shop-panel {
+  width: 560px;
+  max-width: 90%;
+  max-height: calc(480px - 40px);
+  background: linear-gradient(180deg, #1a1423, #0f0b16);
+  border: 2px solid #fff;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  padding: 20px;
+  color: #fff;
+  font-family: "Zpix", monospace;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto; /* 内容超出时在主界面区域内滚动，不压到侧栏/下栏 */
+}
+
+
+    .shop-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .shop-title {
+      font-size: 20px;
+      letter-spacing: 2px;
+    }
+
+    .shop-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .shop-button {
+      background: #32274a;
+      border: 1px solid #ffffffaa;
+      color: #fff;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .shop-button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .shop-button:not(:disabled):hover {
+      background: #46356d;
+    }
+
+    .shop-gold {
+      font-size: 16px;
+      letter-spacing: 1px;
+    }
+
+    .shop-items {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+    }
+
+    .shop-item-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .shop-item-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .shop-item-icon {
+      width: 48px;
+      height: 48px;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      background: rgba(0, 0, 0, 0.2);
+      object-fit: contain;
+    }
+
+    .shop-item-name {
+      font-size: 16px;
+      letter-spacing: 1px;
+    }
+
+    .shop-item-cost,
+    .shop-item-recipe,
+    .shop-item-consume,
+    .shop-item-missing,
+    .shop-item-status {
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .shop-item-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .shop-item-status {
+      color: #ff9696;
+    }
+
+    .shop-items {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .shop-item {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 220px;
+    }
+
+    .shop-item.unavailable {
+      opacity: 0.45;
+    }
+
+    .shop-item-icon {
+      width: 64px;
+      height: 64px;
+      border: 1px solid #ffffff88;
+      image-rendering: pixelated;
+      background: rgba(0, 0, 0, 0.2);
+    }
+
+    .shop-item-header {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .shop-item-name {
+      font-size: 16px;
+      letter-spacing: 1px;
+      color: #ffd966;
+    }
+
+    .shop-item-cost {
+      font-size: 14px;
+      color: #9ed36a;
+    }
+
+    .shop-item-description {
+      font-size: 12px;
+      line-height: 1.4;
+      color: rgba(255, 255, 255, 0.85);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .shop-item-recipe {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .shop-item-upgrades {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.85);
+    }
+
+    .shop-message {
+      min-height: 18px;
+      font-size: 12px;
+      color: #ff8080;
+    }
+    
+    /* ==== Stats Overlay (HTML) ==== */
+    .stats-overlay {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 640px;
+      height: 480px;
+      z-index: 10000;
+      display: none; /* toggled via JS */
+      pointer-events: auto;
+    }
+    .stats-panel {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.80);
+      border: 2px solid #ffffff;
+      display: flex;
+      flex-direction: column;
+      justify-content: center; /* center all blocks vertically */
+      align-items: stretch;
+      box-sizing: border-box;
+      padding: 0; /* centered layout */
+      gap: 6px;
+    }
+    .stats-title {
+      text-align: center;
+      font-family: "Zpix", monospace;
+      font-size: 30px;
+      letter-spacing: 2px;
+      margin: 8px 0 4px 0; /* keep original flow spacing */
+      text-shadow: 2px 2px 0 rgba(0,0,0,0.45);
+      position: relative; top: 50px; /* visually move title down 50px */
+    }
+    .stats-title.win { color: #ffd700; }
+    .stats-title.fail { color: #ff4d4f; }
+    .stats-title.pause { color: #ffeb3b; }
+
+    .stats-bars {
+      /* Left align with 75px side spacing */
+      padding: 6px 75px 10px 75px;
+      box-sizing: border-box;
+      position: relative;
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin: 0; /* keep chart block original vertical position */
+      top: 50px; /* visually move chart down 50px without affecting following blocks */
+    }
+    .stats-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .stats-row {
+      display: grid;
+      grid-template-columns: 120px 1fr; /* widened label column */
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+    }
+    .stats-label {
+      padding-left: 20px; /* align with ticks and inner paddings */
+      color: #ffffff;
+      font-family: "Zpix", monospace;
+      font-size: 16px;
+      letter-spacing: 1px;
+      opacity: 0.95;
+      text-align: left; /* left-align labels */
+    }
+    .stats-bar-outer {
+      position: relative;
+      height: 18px;
+      border: 2px solid #ffffff;
+      background: rgba(255,255,255,0.06);
+      box-sizing: border-box;
+      overflow: visible; /* allow value text to render outside on the right */
+      width: 100%; /* full width; fill indicates proportion */
+    }
+    .stats-bar-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 100%;
+      width: 0%;
+      background: #66aaff; /* default blue */
+    }
+    .stats-bar-fill.yellow { background: #ffd966; }
+    .stats-bar-fill.blue { background: #66aaff; }
+    .stats-bar-fill.red { background: #ff6666; }
+    .stats-bar-fill.green { background: #66ff66; }
+    .stats-bar-fill.gold { background: #ffd966; }
+
+    .stats-value {
+      position: absolute;
+      top: 50%;
+      transform: translate(6px, -50%); /* always outside to the right */
+      white-space: nowrap;
+      color: #ffffff;
+      font-family: "Zpix", monospace;
+      font-size: 14px;
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.6);
+    }
+
+    /* Optional baseline ticks; left/right margins 20px inside .stats-bars */
+    .stats-scale {
+      position: absolute;
+      left: 75px;
+      right: 75px;
+      top: 80px; /* roughly below the title; inside stats area */
+      bottom: 60px; /* leave space for buttons */
+      pointer-events: none;
+    }
+    .stats-scale .tick {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: rgba(255,255,255,0.18);
+    }
+    .stats-actions {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 0 16px 0;
+
+    }
+    .stats-button {
+      background: #32274a;
+      border: 1px solid #ffffffaa;
+      color: #fff;
+      font-family: "Zpix", monospace;
+      font-size: 16px;
+      padding: 8px 16px;
+      cursor: pointer;
+    }
+    .stats-button:hover { background: #46356d; }
+
+    /* ==== Level Progress (20 ticks + arrow) ==== */
+    .level-progress {
+      position: relative;
+      box-sizing: border-box;
+      padding: 0 20px 2px 20px; /* align with stats-bars */
+      height: 128px;
+    }
+    .level-progress .baseline {
+      position: absolute;
+      left: 75px;
+      right: 75px;
+      bottom: 12px;
+      height: 2px;
+      background: rgba(255,255,255,0.7);
+    }
+    .level-progress .ticks {
+      position: absolute;
+      left: 75px;
+      right: 75px;
+      bottom: 12px;
+      height: 10px;
+      pointer-events: none;
+    }
+    .level-progress .ticks .tick {
+      position: absolute;
+      bottom: -4px;
+      width: 1px;
+      height: 14px;
+      background: rgba(255,255,255,0.5);
+    }
+    .level-progress .arrow {
+      position: absolute;
+      bottom: 28px; /* above baseline */
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+    }
+    .level-progress .arrow .label {
+      font-family: "Zpix", monospace;
+      font-size: 14px;
+      color: #fff;
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.6);
+      margin-bottom: 2px;
+      white-space: nowrap;
+    }
+    .level-progress .arrow .tip {
+      width: 0; height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 10px solid #ffeb3b; /* yellow arrow */
+      margin: 0 auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div class="root">
+      <div class="game-border"></div>
+      <div id="game"></div>
+      <div class="panel sidebar">
+        <div class="sidebar-content">
+          <div class="sidebar-section">
+            <div class="sidebar-stat-row">
+              <span class="sidebar-stat-label">倒计时</span>
+              <span class="sidebar-stat-value" id="sidebar-timer-value">01:00</span>
+            </div>
+            <div class="sidebar-stat-row">
+              <span class="sidebar-stat-label">击杀</span>
+              <span class="sidebar-stat-value" id="sidebar-kill-value">0</span>
+            </div>
+            <div class="sidebar-stat-row">
+              <span class="sidebar-stat-label">关卡</span>
+              <span class="sidebar-stat-value" id="sidebar-rank-value">1</span>
+            </div>
+            <div class="sidebar-stat-row">
+              <span class="sidebar-stat-label">点数</span>
+              <span class="sidebar-stat-value" id="sidebar-point-value">0</span>
+            </div>
+          </div>
+          <div class="sidebar-section">
+            <span class="sidebar-stat-label">预览</span>
+            <div class="sidebar-equipment-details" id="sidebar-equipment-details">
+              <span class="sidebar-equipment-hint">查看鼠标移动到的位置</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel bottom-bar">
+        <div class="bottom-stats-center">
+          <div class="skill-resource">
+            <div class="skill-row">
+              <div class="skill-slot" data-skill="Q">
+                <span class="skill-label">Q</span>
+                <img class="skill-icon" data-skill="Q" src="assets/player/reimu/skill/Q.png" alt="Q" />
+                <div class="cooldown-overlay">
+                  <span class="cooldown-timer">0</span>
+                </div>
+              </div>
+              <div class="skill-slot" data-skill="E">
+                <span class="skill-label">E</span>
+                <img class="skill-icon" data-skill="E" src="assets/player/reimu/skill/E.png" alt="E" />
+                <div class="cooldown-overlay">
+                  <span class="cooldown-timer">0</span>
+                </div>
+              </div>
+              <div class="skill-slot" data-skill="R">
+                <span class="skill-label">R</span>
+                <img class="skill-icon" data-skill="R" src="assets/player/reimu/skill/R.png" alt="R" />
+                <div class="cooldown-overlay">
+                  <span class="cooldown-timer">0</span>
+                </div>
+              </div>
+              <div class="skill-slot space" data-skill="SPACE">
+                <span class="skill-label">Space</span>
+                <span class="skill-name">闪避</span>
+                <img class="skill-icon" data-skill="SPACE" src="assets/player/reimu/skill/space.png" alt="Space" />
+                <div class="cooldown-overlay">
+                  <span class="cooldown-timer">0</span>
+                </div>
+              </div>
+            </div>
+            <div class="resource-column">
+              <div class="bar-wrapper">
+                <div id="hp-bar" class="bar-fill"></div>
+                <span id="hp-bar-label" class="bar-label">HP</span>
+              </div>
+              <div class="bar-wrapper">
+                <div id="mp-bar" class="bar-fill mana"></div>
+                <span id="mp-bar-label" class="bar-label">MN</span>
+              </div>
+            </div>
+          </div>
+          <div class="equipment-grid">
+            <div class="equipment-slot" data-slot-index="0">
+              <span class="slot-id">1</span>
+              <span class="equipment-stack-badge"></span>
+              <img class="equipment-icon" alt="" />
+            </div>
+            <div class="equipment-slot" data-slot-index="1">
+              <span class="slot-id">2</span>
+              <span class="equipment-stack-badge"></span>
+              <img class="equipment-icon" alt="" />
+            </div>
+            <div class="equipment-slot" data-slot-index="2">
+              <span class="slot-id">3</span>
+              <span class="equipment-stack-badge"></span>
+              <img class="equipment-icon" alt="" />
+            </div>
+            <div class="equipment-slot" data-slot-index="3">
+              <span class="slot-id">4</span>
+              <span class="equipment-stack-badge"></span>
+              <img class="equipment-icon" alt="" />
+            </div>
+            <div class="equipment-slot" data-slot-index="4">
+              <span class="slot-id">5</span>
+              <span class="equipment-stack-badge"></span>
+              <img class="equipment-icon" alt="" />
+            </div>
+            <div class="equipment-slot" data-slot-index="5">
+              <span class="slot-id">6</span>
+              <span class="equipment-stack-badge"></span>
+              <img class="equipment-icon" alt="" />
+            </div>
+            <div class="equipment-preview-slot" id="equipment-slot-1-preview">
+              <img id="equipment-slot-1-preview-img" alt="预览" />
+            </div>
+          </div>
+        </div>
+        <div class="bottom-divider"></div>
+        <div class="bottom-stats-side" id="stat-lines"></div>
+      </div>
+      <div class="shop-overlay" id="shop-overlay">
+        <div class="shop-panel">
+          <div class="shop-header">
+            <div class="shop-title">Equipment Shop</div>
+            <div class="shop-controls">
+              <span class="shop-gold">Gold: <span id="shop-gold">0</span></span>
+              <button class="shop-button" id="shop-refresh-btn">Refresh (-10)</button>
+              <button class="shop-button" id="shop-exit-run-btn" style="display:none;">Retire</button>
+              <button class="shop-button" id="shop-close-btn">Continue</button>
+            </div>
+          </div>
+          <div class="shop-message" id="shop-message"></div>
+          <div class="shop-items" id="shop-items"></div>
+        </div>
+      </div>
+
+      <!-- Stats Overlay (HTML, not affected by camera zoom) -->
+      <div id="stats-overlay" class="stats-overlay">
+        <div class="stats-panel">
+          <div id="stats-title" class="stats-title">Stats</div>
+          <div class="stats-bars">
+            <div class="stats-rows">
+              <div class="stats-row" data-key="dealt">
+                <div class="stats-label">造成伤害</div>
+                <div class="stats-bar-outer">
+                  <div class="stats-bar-fill yellow" data-seg="phys"></div>
+                  <div class="stats-bar-fill blue" data-seg="magic"></div>
+                  <div class="stats-value" data-value></div>
+                </div>
+              </div>
+              <div class="stats-row" data-key="taken">
+                <div class="stats-label">受到伤害</div>
+                <div class="stats-bar-outer">
+                  <div class="stats-bar-fill red" data-fill></div>
+                  <div class="stats-value" data-value></div>
+                </div>
+              </div>
+              <div class="stats-row" data-key="gold">
+                <div class="stats-label">总经济</div>
+                <div class="stats-bar-outer">
+                  <div class="stats-bar-fill gold" data-fill></div>
+                  <div class="stats-value" data-value></div>
+                </div>
+              </div>
+              <div class="stats-row" data-key="heal">
+                <div class="stats-label">总治疗</div>
+                <div class="stats-bar-outer">
+                  <div class="stats-bar-fill green" data-fill></div>
+                  <div class="stats-value" data-value></div>
+                </div>
+              </div>
+            </div>
+            <div class="stats-scale">
+              <div class="tick" style="left: 0%"></div>
+              <div class="tick" style="left: 25%"></div>
+              <div class="tick" style="left: 50%"></div>
+              <div class="tick" style="left: 75%"></div>
+              <div class="tick" style="left: 100%"></div>
+            </div>
+          </div>
+          <!-- Level progress (20 ticks + arrow) -->
+          <div class="level-progress" id="level-progress">
+            <div class="baseline"></div>
+            <div class="ticks">
+              <div class="tick" style="left: 0%"></div>
+              <div class="tick" style="left: 5.263%"></div>
+              <div class="tick" style="left: 10.526%"></div>
+              <div class="tick" style="left: 15.789%"></div>
+              <div class="tick" style="left: 21.053%"></div>
+              <div class="tick" style="left: 26.316%"></div>
+              <div class="tick" style="left: 31.579%"></div>
+              <div class="tick" style="left: 36.842%"></div>
+              <div class="tick" style="left: 42.105%"></div>
+              <div class="tick" style="left: 47.368%"></div>
+              <div class="tick" style="left: 52.632%"></div>
+              <div class="tick" style="left: 57.895%"></div>
+              <div class="tick" style="left: 63.158%"></div>
+              <div class="tick" style="left: 68.421%"></div>
+              <div class="tick" style="left: 73.684%"></div>
+              <div class="tick" style="left: 78.947%"></div>
+              <div class="tick" style="left: 84.211%"></div>
+              <div class="tick" style="left: 89.474%"></div>
+              <div class="tick" style="left: 94.737%"></div>
+              <div class="tick" style="left: 100%"></div>
+            </div>
+            <div class="arrow" id="level-arrow">
+              <div class="label" id="level-label">1/20</div>
+              <div class="tip"></div>
+            </div>
+          </div>
+          <div class="stats-actions">
+            <button id="stats-restart" class="stats-button">重开</button>
+          </div>
+        </div>
+      </div>
+      <div id="boss-header" style="
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 320px; /* 游戏区宽640px*/
+  transform: translateX(-50%);
+  text-align: center;
+  z-index: 1000;
+  pointer-events: none;
+  width: 640px;
+  padding-top: 16px;
+">
+        <div id="boss-name" style="
+  color: #ffffff;
+  font-family: 'Zpix', monospace;
+  font-size: 24px;
+  text-shadow: 2px 2px 2px rgba(0,0,0,0.5);
+  margin-bottom: 10px;
+">
+        </div>
+        <div id="boss-title" style="
+  color: #d0d0ff;
+  font-family: 'Zpix', monospace;
+  font-size: 16px;
+  text-shadow: 2px 2px 2px rgba(0,0,0,0.5);
+">
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
+
+
+
