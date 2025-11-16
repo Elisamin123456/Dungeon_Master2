@@ -1,9 +1,23 @@
 ﻿/* ==== 基础常量 ==== */
 import { EQUIPMENT_DATA, EQUIPMENT_IDS, ITEM_TIERS } from "./equipmentData.js";
 
+// ==== 模式与地图尺寸（支持 ?arcade 切换）====
+const USE_ARCADE_MODE = (() => {
+  try {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search || "");
+    // 存在 ?arcade 参数则使用旧模式；默认使用新大地图生成器
+    return params.has("arcade");
+  } catch (_) { return false; }
+})();
+
 const GAME_WIDTH = 640;
 const GAME_HEIGHT = 480;
-const MAP_TILES = 64;
+// 每区块为 64x64 格，总地图为 5x5 区块（默认），?arcade 时为 1x1
+const BLOCK_SIZE_TILES = 32;
+const BLOCK_GRID = USE_ARCADE_MODE ? 1 : 5;
+const MAP_TILES = BLOCK_SIZE_TILES * BLOCK_GRID;
+const DUNGEON_FRAME_SIZE_PX = 32; // dungeon_defult.png: 96x96 => 32x32 九宫格
 const TILE_SIZE = 16;
 const WALL_COLLISION_MARGIN = 1;
 const ENEMY_NAV_RECALC_INTERVAL_MS = 450;
@@ -790,6 +804,11 @@ class PreloadScene extends Phaser.Scene {
     
     this.load.image("floor", "assets/ground/defultground.png");
     this.load.image("wall", "assets/ground/defultwall.png");
+    // 地牢 3x3 采样（按行：左上,上,右上 / 左,中,右 / 左下,下,右下）
+    this.load.spritesheet("dungeon", "assets/ground/dungeon_defult.png", {
+      frameWidth: DUNGEON_FRAME_SIZE_PX,
+      frameHeight: DUNGEON_FRAME_SIZE_PX,
+    });
     [
       "reimu_11","reimu_12","reimu_13","reimu_14",
       "reimu_21","reimu_22","reimu_23","reimu_24",
@@ -2819,10 +2838,12 @@ updateSpellbladeOverlays() {
   /* ==== 地图 ==== */
   createMap() {
     this.physics.world.setBounds(0, 0, WORLD_SIZE, WORLD_SIZE);
-    this.floor = this.add.tileSprite(WORLD_SIZE/2, WORLD_SIZE/2, WORLD_SIZE, WORLD_SIZE, "floor").setOrigin(0.5);
+    // 新默认：不铺满地板，留空虚空
     this.wallGroup = this.physics.add.staticGroup();
     this.wallTiles = [];
-    this.generateRandomSegmentsMap();
+    this.floorTiles = [];
+    if (USE_ARCADE_MODE) this.generateRandomSegmentsMap();
+    else this.generateDungeonMap();
   }
 
   generateRandomSegmentsMap() {
@@ -2939,6 +2960,204 @@ updateSpellbladeOverlays() {
     }
 
     this.buildWallCollidersFromGrid(this.wallGrid, width, height);
+  }
+
+  // 新默认大地图生成：5x5 区块，9 区块矩形 + 通道
+  generateDungeonMap() {
+    if (this.wallGroup) this.wallGroup.clear(true, true);
+    if (!this.wallTiles) this.wallTiles = [];
+    this.wallTiles.forEach((tile) => tile?.destroy?.());
+    this.wallTiles.length = 0;
+    if (!this.floorTiles) this.floorTiles = [];
+    this.floorTiles.forEach((t) => t?.destroy?.());
+    this.floorTiles.length = 0;
+
+    const width = MAP_TILES;
+    const height = MAP_TILES;
+    const isFloor = Array.from({ length: height }, () => Array(width).fill(false));
+
+    // 选择 9 个连通区块
+    const startBx = Math.floor(BLOCK_GRID / 2);
+    const startBy = Math.floor(BLOCK_GRID / 2);
+    const bkey = (x,y)=> `${x},${y}`;
+    const selected = new Set([bkey(startBx,startBy)]);
+    const frontier = [{x:startBx,y:startBy}];
+    while (selected.size < 9 && frontier.length) {
+      const cur = frontier.shift();
+      const nbs = [
+        {x:cur.x+1,y:cur.y}, {x:cur.x-1,y:cur.y}, {x:cur.x,y:cur.y+1}, {x:cur.x,y:cur.y-1}
+      ].filter(nb => nb.x>=0 && nb.y>=0 && nb.x<BLOCK_GRID && nb.y<BLOCK_GRID);
+      for (let i=nbs.length-1;i>0;i-=1){ const j=Math.floor(Math.random()*(i+1)); [nbs[i],nbs[j]]=[nbs[j],nbs[i]]; }
+      for (const nb of nbs) {
+        if (selected.size >= 9) break;
+        const k = bkey(nb.x, nb.y);
+        if (!selected.has(k)) { selected.add(k); frontier.push(nb); }
+      }
+      if (frontier.length === 0 && selected.size < 9) {
+        // 如遇死胡同，扩一圈
+        const curSel = Array.from(selected).map(s=>{ const [x,y]=s.split(",").map(Number); return {x,y};});
+        for (const c of curSel) {
+          const ns = [
+            {x:c.x+1,y:c.y}, {x:c.x-1,y:c.y}, {x:c.x,y:c.y+1}, {x:c.x,y:c.y-1}
+          ].filter(nb => nb.x>=0 && nb.y>=0 && nb.x<BLOCK_GRID && nb.y<BLOCK_GRID);
+          for (const nb of ns) {
+            if (selected.size>=9) break;
+            const k = bkey(nb.x, nb.y);
+            if (!selected.has(k)) { selected.add(k); frontier.push(nb); }
+          }
+          if (selected.size>=9) break;
+        }
+      }
+    }
+
+    // 生成房间
+    const rooms = [];
+    const blockToRoom = new Map();
+    for (const s of selected) {
+      const [bx, by] = s.split(",").map(Number);
+      const baseX = bx * BLOCK_SIZE_TILES;
+      const baseY = by * BLOCK_SIZE_TILES;
+      const rw = Phaser.Math.Between(10, 20);
+      const rh = Phaser.Math.Between(10, 20);
+      const rx = baseX + Phaser.Math.Between(0, Math.max(0, BLOCK_SIZE_TILES - rw));
+      const ry = baseY + Phaser.Math.Between(0, Math.max(0, BLOCK_SIZE_TILES - rh));
+      for (let y=ry;y<ry+rh;y+=1){ for (let x=rx;x<rx+rw;x+=1){ if (y>=0&&x>=0&&y<height&&x<width) isFloor[y][x] = true; } }
+      const cx = Math.floor(rx + rw/2);
+      const cy = Math.floor(ry + rh/2);
+      const room = { bx, by, rx, ry, rw, rh, cx, cy };
+      rooms.push(room);
+      blockToRoom.set(bkey(bx,by), room);
+      // 使用中央地板帧(4)绘制地板
+      this.addFloorRect(rx, ry, rw, rh);
+    }
+
+    // 连接生成树（至少一个通道），从中心块开始 BFS 建边
+    const visited = new Set([bkey(startBx,startBy)]);
+    const queue = [bkey(startBx,startBy)];
+    const edges = [];
+    while (queue.length) {
+      const cur = queue.shift();
+      const [cx,cy] = cur.split(",").map(Number);
+      const nbs = [bkey(cx+1,cy), bkey(cx-1,cy), bkey(cx,cy+1), bkey(cx,cy-1)];
+      for (const nk of nbs) {
+        if (!selected.has(nk) || visited.has(nk)) continue;
+        visited.add(nk);
+        edges.push({ from: cur, to: nk });
+        queue.push(nk);
+      }
+    }
+
+    // 通道：1 格地板宽（自动生成的墙体在两侧）
+    const corridorWidth = 1;
+    const carveRect = (lx, rx, ty, by) => {
+      const H = isFloor.length, W = isFloor[0]?.length||0;
+      const clamp = (v, lo, hi)=> Math.max(lo, Math.min(hi, v));
+      lx=clamp(lx,0,W-1); rx=clamp(rx,0,W-1); ty=clamp(ty,0,H-1); by=clamp(by,0,H-1);
+      for (let y=ty;y<=by;y+=1){ for (let x=lx;x<=rx;x+=1){ isFloor[y][x]=true; } }
+    };
+    for (const e of edges) {
+      const a = blockToRoom.get(e.from); const b = blockToRoom.get(e.to); if (!a||!b) continue;
+      const sx=a.cx, sy=a.cy, tx=b.cx, ty=b.cy;
+      const hFirst = Math.random()<0.5;
+      if (hFirst) {
+        // 水平段：高=1
+        carveRect(Math.min(sx,tx), Math.max(sx,tx), sy, sy);
+        this.addFloorRect(Math.min(sx,tx), sy, Math.abs(tx-sx)+1, corridorWidth);
+        // 垂直段：宽=1
+        carveRect(tx, tx, Math.min(sy,ty), Math.max(sy,ty));
+        this.addFloorRect(tx, Math.min(sy,ty), corridorWidth, Math.abs(ty-sy)+1);
+      } else {
+        // 垂直段：宽=1
+        carveRect(sx, sx, Math.min(sy,ty), Math.max(sy,ty));
+        this.addFloorRect(sx, Math.min(sy,ty), corridorWidth, Math.abs(ty-sy)+1);
+        // 水平段：高=1
+        carveRect(Math.min(sx,tx), Math.max(sx,tx), ty, ty);
+        this.addFloorRect(Math.min(sx,tx), ty, Math.abs(tx-sx)+1, corridorWidth);
+      }
+    }
+
+    // 自动生成墙（与地板四邻接）
+    const isWall = Array.from({ length: height }, () => Array(width).fill(false));
+    const inBounds = (x,y)=> x>=0&&y>=0&&x<width&&y<height;
+    for (let y=0;y<height;y+=1) {
+      for (let x=0;x<width;x+=1) {
+        if (isFloor[y][x]) continue;
+        const adjCardinal = (inBounds(x+1,y)&&isFloor[y][x+1])
+          || (inBounds(x-1,y)&&isFloor[y][x-1])
+          || (inBounds(x,y+1)&&isFloor[y+1][x])
+          || (inBounds(x,y-1)&&isFloor[y-1][x]);
+        const adjDiagonal = (inBounds(x+1,y+1)&&isFloor[y+1][x+1])
+          || (inBounds(x-1,y-1)&&isFloor[y-1][x-1])
+          || (inBounds(x+1,y-1)&&isFloor[y-1][x+1])
+          || (inBounds(x-1,y+1)&&isFloor[y+1][x-1]);
+        if (adjCardinal || adjDiagonal) isWall[y][x]=true;
+      }
+    }
+
+    // 放置墙体贴图（根据 3x3 采样确定帧）
+    const half = TILE_SIZE/2;
+    for (let y=0;y<height;y+=1) {
+      for (let x=0;x<width;x+=1) {
+        if (!isWall[y][x]) continue;
+        const frame = this.getDungeonWallFrame(x,y,isFloor);
+        const wx = x*TILE_SIZE + half; const wy = y*TILE_SIZE + half;
+        const s = this.add.sprite(wx, wy, "dungeon", frame).setDepth(1).setOrigin(0.5);
+        s.setDisplaySize(TILE_SIZE, TILE_SIZE);
+        this.wallTiles.push(s);
+      }
+    }
+
+    // 记录网格：墙与地板；并建立碰撞
+    this.wallGrid = isWall.map(row=>row.slice());
+    this.floorGrid = isFloor.map(row=>row.slice());
+    this.buildWallCollidersFromGrid(this.wallGrid, width, height);
+  }
+
+  // 采样顺序：
+  // 第一行：左上(0), 上(1), 右上(2)
+  // 第二行：左(3), 中央地板(4), 右(5)
+  // 第三行：左下(6), 下(7), 右下(8)
+  getDungeonWallFrame(x, y, isFloor) {
+    const H=isFloor.length, W=isFloor[0]?.length||0;
+    const f=(xx,yy)=> (yy>=0&&yy<H&&xx>=0&&xx<W) ? !!isFloor[yy][xx] : false;
+    const up=f(x, y-1), down=f(x, y+1), left=f(x-1,y), right=f(x+1,y);
+    const ur=f(x+1,y-1), dr=f(x+1,y+1), ul=f(x-1,y-1), dl=f(x-1,y+1);
+    // 仅对角相邻（无上下左右）时，需使用“对角的相反角”来避免外角镜像错误
+    if (!up && !down && !left && !right) {
+      if (dr) return 0; // 对角在右下 -> 取左上(0)
+      if (ur) return 6; // 对角在右上 -> 取左下(6)
+      if (dl) return 2; // 对角在左下 -> 取右上(2)
+      if (ul) return 8; // 对角在左上 -> 取右下(8)
+    }
+    if (right && down && !left && !up) return 8;   // 右下
+    if (right && up   && !left && !down) return 2; // 右上
+    if (left  && down && !right && !up) return 6;  // 左下
+    if (left  && up   && !right && !down) return 0; // 左上
+    // 无正交邻接，仅有对角邻接 -> 放置角块，避免边角出现“虚空”
+    if (!up && !down && !left && !right) {
+      if (dr) return 8; // 右下角
+      if (ur) return 2; // 右上角
+      if (dl) return 6; // 左下角
+      if (ul) return 0; // 左上角
+    }
+    if (up) return 1;
+    if (down) return 7;
+    // 修复：左右采样反了，这里交换左右帧号
+    if (left) return 5;  // 原为 3（左）→ 实际需要用右帧
+    if (right) return 3; // 原为 5（右）→ 实际需要用左帧
+    return 1; // 默认上
+  }
+
+  // 使用中央地板帧(4)绘制一块地板矩形
+  addFloorRect(rx, ry, rw, rh) {
+    const cx = (rx + rw/2) * TILE_SIZE;
+    const cy = (ry + rh/2) * TILE_SIZE;
+    const wpx = rw * TILE_SIZE;
+    const hpx = rh * TILE_SIZE;
+    const ts = this.add.tileSprite(cx, cy, wpx, hpx, "dungeon", 4).setOrigin(0.5).setDepth(0);
+    ts.setTileScale(TILE_SIZE / DUNGEON_FRAME_SIZE_PX, TILE_SIZE / DUNGEON_FRAME_SIZE_PX);
+    this.floorTiles.push(ts);
+    return ts;
   }
 
   addWall(x, y, scale = 1) {
@@ -3284,6 +3503,14 @@ updateSpellbladeOverlays() {
 
     this.rangeGraphics = this.add.graphics().setDepth(2);
     this.rangeGraphics.clear();
+
+    // 确保出生点在可行走地板上
+    try {
+      if (!this.isPositionWalkable(this.player.x, this.player.y)) {
+        const safe = this.findClearPosition(TILE_SIZE, { avoidPlayer: false });
+        if (safe) this.player.setPosition(safe.x, safe.y);
+      }
+    } catch (_) {}
 
     // Q施法范围预览图形（扇形+近战圈），默认隐藏
     this.qAimGraphics = this.add.graphics().setDepth(3);
@@ -4626,11 +4853,18 @@ updateEnemies() {
       this.isBossStage = (this.level === 10) || (this.level % 20 === 0);
 
       // 刷新地形（Boss关卡仅保留边框）
-      this.generateRandomSegmentsMap();
+      if (USE_ARCADE_MODE) this.generateRandomSegmentsMap(); else this.generateDungeonMap();
 
       // 重置玩家位置
       if (this.player) {
-        this.player.setPosition(WORLD_SIZE/2, WORLD_SIZE/2);
+        let nx = WORLD_SIZE/2, ny = WORLD_SIZE/2;
+        try {
+          if (!this.isPositionWalkable(nx, ny)) {
+            const p = this.findClearPosition(TILE_SIZE, { avoidPlayer: false });
+            if (p) { nx = p.x; ny = p.y; }
+          }
+        } catch (_) {}
+        this.player.setPosition(nx, ny);
         this.player.body.setVelocity(0, 0);
         this.playerFacing = "down";
         this.stopPlayerAnimation(this.playerFacing);
@@ -5659,12 +5893,19 @@ castR() {
   }
 
   isPositionWalkable(x, y) {
-    const grid = this.wallGrid;
-    if (!Array.isArray(grid) || grid.length === 0) return true;
+    const wall = this.wallGrid;
+    const floor = this.floorGrid;
     const tile = this.worldToTileCoords(x, y);
     if (!tile) return false;
-    if (!Array.isArray(grid[tile.y])) return false;
-    if (grid[tile.y][tile.x]) return false;
+    if (Array.isArray(floor) && floor.length > 0) {
+      const inBounds = tile.y >= 0 && tile.y < floor.length && tile.x >= 0 && tile.x < (floor[0]?.length || 0);
+      if (!inBounds) return false;
+      if (!floor[tile.y][tile.x]) return false; // 只允许在地板上
+    }
+    if (Array.isArray(wall) && wall.length > 0) {
+      if (!Array.isArray(wall[tile.y])) return false;
+      if (wall[tile.y][tile.x]) return false;
+    }
     return true;
   }
 
