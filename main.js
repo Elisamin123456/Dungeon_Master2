@@ -14,7 +14,7 @@ const USE_ARCADE_MODE = (() => {
 const GAME_WIDTH = 640; // game width in pixels
 const GAME_HEIGHT = 480;
 // 每区块为 64x64 格，总地图为 5x5 区块（默认），?arcade 时为 1x1
-const BLOCK_SIZE_TILES = 32;
+const BLOCK_SIZE_TILES = 48;
 const BLOCK_GRID = USE_ARCADE_MODE ? 1 : 5;
 const MAP_TILES = BLOCK_SIZE_TILES * BLOCK_GRID;
 const DUNGEON_FRAME_SIZE_PX = 32; // dungeon_defult.png: 96x96 => 32x32 九宫格
@@ -472,6 +472,7 @@ const BULLET_LIFETIME = 4500; // ms
 
 const ENEMY_MAX_COUNT = 100;
 const ENEMY_CONTACT_DAMAGE = (enemy) => enemy?.attackDamage ?? 0;
+const ELITE_SCALE_MULTIPLIER = 1.5;
 
 const ENEMY_RARITIES = Object.freeze({
   BASIC: "basic",
@@ -530,7 +531,7 @@ const ENEMY_TYPE_CONFIG = Object.freeze({
       [ENEMY_RARITIES.MID]: {
         unlockRank: 11,
         hp: 400,
-        attackDamage: 50,
+        attackDamage: 20,
         abilityPower: 0,
         armor: 0,
         defense: 0,
@@ -548,7 +549,7 @@ const ENEMY_TYPE_CONFIG = Object.freeze({
       [ENEMY_RARITIES.EPIC]: {
         unlockRank: 14,
         hp: 1000,
-        attackDamage: 100,
+        attackDamage: 50,
         abilityPower: 0,
         armor: 0,
         defense: 0,
@@ -591,7 +592,7 @@ const ENEMY_TYPE_CONFIG = Object.freeze({
         unlockRank: 12,
         hp: 100,
         attackDamage: 10,
-        abilityPower: 30,
+        abilityPower: 10,
         armor: 10,
         defense: 0,
         moveSpeed: 80,
@@ -612,7 +613,7 @@ const ENEMY_TYPE_CONFIG = Object.freeze({
         unlockRank: 15,
         hp: 100,
         attackDamage: 10,
-        abilityPower: 30,
+        abilityPower: 20,
         armor: 50,
         defense: 0,
         moveSpeed: 90,
@@ -681,7 +682,7 @@ const ENEMY_TYPE_CONFIG = Object.freeze({
         unlockRank: 13,
         hp: 50,
         attackDamage: 0,
-        abilityPower: 50,
+        abilityPower: 5,
         armor: 0,
         defense: 10,
         textureKey: "enemy_orb_basic",
@@ -702,7 +703,7 @@ const ENEMY_TYPE_CONFIG = Object.freeze({
         unlockRank: 16,
         hp: 200,
         attackDamage: 0,
-        abilityPower: 50,
+        abilityPower: 10,
         armor: 0,
         defense: 25,
         textureKey: "enemy_orb_mid",
@@ -954,6 +955,7 @@ class GameScene extends Phaser.Scene {
     super("GameScene");
     this.elapsed = 0;
     this.killCount = 0;
+    this.minimap = null;
   }
 
   init() {
@@ -1598,21 +1600,24 @@ this.physics.add.overlap(this.weaponHitbox, this.rinCorpses, (_hit, corpse)=>{
       levelProgress: document.getElementById("level-progress"),
       levelArrow: document.getElementById("level-arrow"),
       levelLabel: document.getElementById("level-label"),
+      minimapContainer: document.getElementById("minimap-container"),
+      minimapGrid: document.getElementById("minimap-grid"),
     };
     if (this.ui.bossHeader) this.ui.bossHeader.style.display = "block";
     const selectFirst = (selectors) => selectors.map((s) => document.querySelector(s)).find(Boolean);
-    const skillSelectors = {
+    const skillSlotSelectors = {
       Q: ['.skill-slot[data-skill="Q"]', '[data-skill="Q"]', '#skill-q', '.skill-q'],
       E: ['.skill-slot[data-skill="E"]', '[data-skill="E"]', '#skill-e', '.skill-e'],
       R: ['.skill-slot[data-skill="R"]', '[data-skill="R"]', '#skill-r', '.skill-r'],
       DASH: ['.skill-slot[data-skill="SPACE"]', '[data-skill="SPACE"]', '#skill-space', '.skill-space'],
     };
 
+    const enabledSkills = new Set(["E"]);
     const iconMap = { Q: "skill_Q", E: "skill_E", R: "skill_R", DASH: "skill_SPACE" };
 
     this.ui.skillUi = {};
 
-    Object.entries(skillSelectors).forEach(([key, selectors]) => {
+    Object.entries(skillSlotSelectors).forEach(([key, selectors]) => {
       const slotCandidate = selectFirst(selectors);
       if (!slotCandidate) return;
       const slot = slotCandidate.classList?.contains("skill-slot")
@@ -1621,31 +1626,50 @@ this.physics.add.overlap(this.weaponHitbox, this.rinCorpses, (_hit, corpse)=>{
       if (!slot) return;
 
       const iconEl = slot.querySelector?.(".skill-icon") ?? null;
+      const disabled = !enabledSkills.has(key);
       if (iconEl && !iconEl.getAttribute("src")) {
-        const texKey = iconMap[key];
-        let src = null;
-        if (texKey && this.textures && this.textures.exists(texKey)) {
-          try {
-            src = this.textures.getBase64(texKey);
-          } catch (_) {
-            src = null;
+        if (!disabled) {
+          const texKey = iconMap[key];
+          let src = null;
+          if (texKey && this.textures && this.textures.exists(texKey)) {
+            try {
+              src = this.textures.getBase64(texKey);
+            } catch (_) {
+              src = null;
+            }
           }
+          if (!src) {
+            const fileName = texKey ? texKey.replace(/^skill_?/, "") : key;
+            src = `assets/player/reimu/skill/${fileName}.png`;
+          }
+          iconEl.src = src;
+        } else {
+          iconEl.src = "";
         }
-        if (!src) {
-          const fileName = texKey ? texKey.replace(/^skill_?/, "") : key;
-          src = `assets/player/reimu/skill/${fileName}.png`;
-        }
-        iconEl.src = src;
       }
 
       const overlayEl = slot.querySelector?.(".cooldown-overlay") ?? null;
       const timerEl = overlayEl?.querySelector?.(".cooldown-timer") ?? null;
+
+      if (disabled) {
+        slot.classList.add("skill-disabled");
+        slot.style.pointerEvents = "none";
+        slot.setAttribute("aria-disabled", "true");
+        if (iconEl) {
+          iconEl.style.opacity = "0.35";
+          iconEl.style.filter = "grayscale(1)";
+          iconEl.style.pointerEvents = "none";
+          iconEl.style.transition = "opacity 0.2s ease";
+        }
+        if (overlayEl) overlayEl.style.display = "none";
+      }
 
       this.ui.skillUi[key] = {
         slot,
         icon: iconEl,
         overlay: overlayEl,
         timer: timerEl,
+        disabled,
       };
 
       if (overlayEl) {
@@ -1653,7 +1677,7 @@ this.physics.add.overlap(this.weaponHitbox, this.rinCorpses, (_hit, corpse)=>{
         overlayEl.style.opacity = "1";
       }
       if (timerEl) timerEl.textContent = "";
-      if (iconEl) iconEl.style.opacity = "1";
+      if (iconEl) iconEl.style.opacity = disabled ? iconEl.style.opacity : "1";
     });
 
     if (!this.skillTooltipTarget) this.skillTooltipTarget = this.ui.equipmentDetails;
@@ -1693,6 +1717,7 @@ this.physics.add.overlap(this.weaponHitbox, this.rinCorpses, (_hit, corpse)=>{
     Object.entries(this.ui.skillUi).forEach(([key, entry]) => {
       const targetEl = entry?.slot || entry?.icon;
       if (!targetEl) return;
+      if (entry?.disabled) return;
       targetEl.addEventListener("mouseenter", () => showTip(key));
       targetEl.addEventListener("mouseleave", clearTip);
     });
@@ -3219,6 +3244,352 @@ updateSpellbladeOverlays() {
     return wall;
   }
 
+  // Add interior walls for combat blocks inside their rooms.
+  decorateCombatBlocksWithInternalWalls(isWall, skipTiles = new Set(), internalWallSprites = new Map()) {
+    if (!Array.isArray(isWall) || !this.dungeonBlocks || !this.dungeonBlocks.length) return;
+    const combatBlocks = this.dungeonBlocks.filter(
+      (b) => b && b.isCombat && b.room && Array.isArray(b.doors),
+    );
+    if (!combatBlocks.length) return;
+
+    const entriesByKey = new Map();
+    combatBlocks.forEach((block) => {
+      entriesByKey.set(block.key, this.getRoomDoorEntryTiles(block));
+    });
+
+    combatBlocks.forEach((block) => {
+      const entryTiles = entriesByKey.get(block.key) || [];
+      this.generateInternalWallsForCombatRoom(block, isWall, entryTiles, skipTiles, internalWallSprites);
+    });
+  }
+
+  // Compute interior entry tiles inside a room for each door of the block.
+  getRoomDoorEntryTiles(block) {
+    const room = block?.room;
+    if (!room) return [];
+    const entries = [];
+    const seen = new Set();
+    const addEntry = (tx, ty) => {
+      if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
+      const ix = Math.floor(tx);
+      const iy = Math.floor(ty);
+      if (ix < room.x || ix >= room.x + room.w || iy < room.y || iy >= room.y + room.h) return;
+      const key = `${ix},${iy}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      entries.push({ x: ix, y: iy });
+    };
+
+    const doors = Array.isArray(block.doors) ? block.doors : [];
+    doors.forEach((door) => {
+      const tile = door?.tile;
+      if (!tile) return;
+      const tx = tile.x;
+      const ty = tile.y;
+      if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
+
+      let entryX = tx;
+      let entryY = ty;
+
+      if (ty < room.y) entryY = room.y;
+      else if (ty >= room.y + room.h) entryY = room.y + room.h - 1;
+      else if (tx < room.x) entryX = room.x;
+      else if (tx >= room.x + room.w) entryX = room.x + room.w - 1;
+      else {
+        entryX = Phaser.Math.Clamp(tx, room.x, room.x + room.w - 1);
+        entryY = Phaser.Math.Clamp(ty, room.y, room.y + room.h - 1);
+      }
+
+      addEntry(entryX, entryY);
+    });
+
+    if (!entries.length) {
+      addEntry(room.cx, room.cy);
+    }
+
+    return entries;
+  }
+
+  // Generate interior walls for a single combat room according to configured probabilities.
+  generateInternalWallsForCombatRoom(block, isWall, entryTiles, skipTiles, internalWallSprites = new Map()) {
+    const room = block?.room;
+    if (!room || !Array.isArray(isWall) || !isWall.length) return;
+    const width = room.w;
+    const height = room.h;
+    if (width <= 2 || height <= 2) return;
+
+    if (block.type === "elite") {
+      this.decorateEliteRoomWalls(block, isWall, entryTiles, skipTiles);
+      return;
+    }
+
+    const roll = Math.random();
+    // 20% chance: no extra walls in this combat block.
+    if (roll >= 0.8) return;
+
+    const gridHeight = isWall.length;
+    const gridWidth = Array.isArray(isWall[0]) ? isWall[0].length : 0;
+    if (gridWidth <= 0) return;
+
+    const reserved = new Set();
+    const buildKey = (tx, ty) => `${tx},${ty}`;
+    const skip = skipTiles || new Set();
+    if (Array.isArray(entryTiles)) {
+      entryTiles.forEach((p) => {
+        if (!p) return;
+        const tx = Math.floor(p.x);
+        const ty = Math.floor(p.y);
+        if (tx < room.x || tx >= room.x + width || ty < room.y || ty >= room.y + height) return;
+        reserved.add(buildKey(tx, ty));
+      });
+    }
+
+    const markWall = (tx, ty) => {
+      if (tx < room.x || tx >= room.x + width || ty < room.y || ty >= room.y + height) return;
+      if (ty < 0 || ty >= gridHeight || tx < 0 || tx >= gridWidth) return;
+      const key = buildKey(tx, ty);
+      if (reserved.has(key)) return;
+      if (isWall[ty][tx]) return;
+      isWall[ty][tx] = true;
+      skip.add(key);
+      const wx = tx * TILE_SIZE + TILE_SIZE / 2;
+      const wy = ty * TILE_SIZE + TILE_SIZE / 2;
+      const sprite = this.addWall(wx, wy);
+      if (sprite && internalWallSprites && typeof internalWallSprites.set === "function") {
+        internalWallSprites.set(key, sprite);
+      }
+    };
+
+    // 40%: two horizontal and two vertical segments, length = floor((w + h) / 4).
+    if (roll < 0.4) {
+      const segLength = Math.max(1, Math.floor((width + height) / 4));
+      if (segLength <= 0) return;
+
+      const tryPlaceSegment = (orientation) => {
+        const maxAttempts = 40;
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (orientation === "horizontal") {
+            if (segLength > width) return false;
+            const sy = Phaser.Math.Between(room.y, room.y + height - 1);
+            const sx = Phaser.Math.Between(room.x, room.x + width - segLength);
+            const tiles = [];
+            let blocked = false;
+            for (let i = 0; i < segLength; i += 1) {
+              const tx = sx + i;
+              const ty = sy;
+              if (ty < 0 || ty >= gridHeight || tx < 0 || tx >= gridWidth) { blocked = true; break; }
+              const key = buildKey(tx, ty);
+              if (reserved.has(key) || isWall[ty][tx]) { blocked = true; break; }
+              tiles.push({ x: tx, y: ty });
+            }
+            if (blocked || !tiles.length) continue;
+            tiles.forEach((t) => markWall(t.x, t.y));
+            return true;
+          }
+          // vertical
+          if (segLength > height) return false;
+          const sx = Phaser.Math.Between(room.x, room.x + width - 1);
+          const sy = Phaser.Math.Between(room.y, room.y + height - segLength);
+          const tiles = [];
+          let blocked = false;
+          for (let i = 0; i < segLength; i += 1) {
+            const tx = sx;
+            const ty = sy + i;
+            if (ty < 0 || ty >= gridHeight || tx < 0 || tx >= gridWidth) { blocked = true; break; }
+            const key = buildKey(tx, ty);
+            if (reserved.has(key) || isWall[ty][tx]) { blocked = true; break; }
+            tiles.push({ x: tx, y: ty });
+          }
+          if (blocked || !tiles.length) continue;
+          tiles.forEach((t) => markWall(t.x, t.y));
+          return true;
+        }
+        return false;
+      };
+
+      for (let i = 0; i < 2; i += 1) {
+        tryPlaceSegment("horizontal");
+      }
+      for (let i = 0; i < 2; i += 1) {
+        tryPlaceSegment("vertical");
+      }
+      return;
+    }
+
+    // 20%: many single-tile walls, count = floor((w * h) / 20).
+    if (roll < 0.6) {
+      const target = Math.floor((width * height)/20);
+      if (target <= 0) return;
+      const maxAttempts = target * 8;
+      let placed = 0;
+      for (let attempt = 0; attempt < maxAttempts && placed < target; attempt += 1) {
+        const tx = Phaser.Math.Between(room.x, room.x + width - 1);
+        const ty = Phaser.Math.Between(room.y, room.y + height - 1);
+        if (ty < 0 || ty >= gridHeight || tx < 0 || tx >= gridWidth) continue;
+        const key = buildKey(tx, ty);
+        if (reserved.has(key) || isWall[ty][tx]) continue;
+        markWall(tx, ty);
+        placed += 1;
+      }
+      return;
+    }
+
+    // Remaining 20%: no additional interior walls.
+    return;
+  }
+
+  // Maze-like interior walls inside a rectangular room while keeping connectivity.
+  generateMazeWallsForRoom(room, isWall, reserved, skipTiles) {
+    const width = room.w;
+    const height = room.h;
+    if (width <= 2 || height <= 2) return;
+    const gridHeight = isWall.length;
+    const gridWidth = Array.isArray(isWall[0]) ? isWall[0].length : 0;
+    if (gridWidth <= 0) return;
+
+    const roomW = width;
+    const roomH = height;
+    const localWalls = Array.from({ length: roomH }, () => Array(roomW).fill(false));
+
+    const isWalkableConnected = () => {
+      let totalWalkable = 0;
+      let start = null;
+      for (let ly = 0; ly < roomH; ly += 1) {
+        for (let lx = 0; lx < roomW; lx += 1) {
+          if (localWalls[ly][lx]) continue;
+          totalWalkable += 1;
+          if (!start) start = { lx, ly };
+        }
+      }
+      if (!start) return false;
+      const visited = Array.from({ length: roomH }, () => Array(roomW).fill(false));
+      const queue = [start];
+      visited[start.ly][start.lx] = true;
+      let reachable = 1;
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+      ];
+      while (queue.length) {
+        const cur = queue.shift();
+        for (let i = 0; i < dirs.length; i += 1) {
+          const nx = cur.lx + dirs[i].dx;
+          const ny = cur.ly + dirs[i].dy;
+          if (nx < 0 || ny < 0 || nx >= roomW || ny >= roomH) continue;
+          if (localWalls[ny][nx] || visited[ny][nx]) continue;
+          visited[ny][nx] = true;
+          reachable += 1;
+          queue.push({ lx: nx, ly: ny });
+        }
+      }
+      return reachable === totalWalkable;
+    };
+
+    const maxWallsTarget = Math.floor(roomW * roomH * 0.45);
+    const maxAttempts = maxWallsTarget * 6;
+    let placedWalls = 0;
+
+    const buildKey = (tx, ty) => `${tx},${ty}`;
+
+    for (let attempt = 0; attempt < maxAttempts && placedWalls < maxWallsTarget; attempt += 1) {
+      const lx = Phaser.Math.Between(0, roomW - 1);
+      const ly = Phaser.Math.Between(0, roomH - 1);
+      const gx = room.x + lx;
+      const gy = room.y + ly;
+      if (gy < 0 || gy >= gridHeight || gx < 0 || gx >= gridWidth) continue;
+      const key = buildKey(gx, gy);
+      if (reserved.has(key) || isWall[gy][gx]) continue;
+      if (localWalls[ly][lx]) continue;
+
+      localWalls[ly][lx] = true;
+      if (!isWalkableConnected()) {
+        localWalls[ly][lx] = false;
+        continue;
+      }
+      placedWalls += 1;
+    }
+
+    const halfTile = TILE_SIZE / 2;
+    for (let ly = 0; ly < roomH; ly += 1) {
+      for (let lx = 0; lx < roomW; lx += 1) {
+        if (!localWalls[ly][lx]) continue;
+        const gx = room.x + lx;
+        const gy = room.y + ly;
+        if (gy < 0 || gy >= gridHeight || gx < 0 || gx >= gridWidth) continue;
+        if (isWall[gy][gx]) continue;
+        isWall[gy][gx] = true;
+        if (skipTiles) {
+          const key = `${gx},${gy}`;
+          skipTiles.add(key);
+        }
+        const wx = gx * TILE_SIZE + halfTile;
+        const wy = gy * TILE_SIZE + halfTile;
+        this.addWall(wx, wy);
+      }
+    }
+  }
+
+  decorateEliteRoomWalls(block, isWall, entryTiles, skipTiles) {
+    const room = block?.room;
+    if (!room || !Array.isArray(isWall) || !isWall.length) return;
+    const gridHeight = isWall.length;
+    const gridWidth = Array.isArray(isWall[0]) ? isWall[0].length : 0;
+    if (gridWidth <= 0) return;
+    const reserved = new Set();
+    const buildKey = (tx, ty) => `${tx},${ty}`;
+    const entries = Array.isArray(entryTiles) ? entryTiles : [];
+    entries.forEach((pos) => {
+      if (!pos) return;
+      const tx = Math.floor(pos.x ?? 0);
+      const ty = Math.floor(pos.y ?? 0);
+      if (tx < room.x || tx >= room.x + room.w || ty < room.y || ty >= room.y + room.h) return;
+      reserved.add(buildKey(tx, ty));
+    });
+    const markWall = (tx, ty) => {
+      if (tx < room.x || tx >= room.x + room.w || ty < room.y || ty >= room.y + room.h) return;
+      if (ty < 0 || ty >= gridHeight || tx < 0 || tx >= gridWidth) return;
+      const key = buildKey(tx, ty);
+      if (reserved.has(key)) return;
+      if (isWall[ty][tx]) return;
+      isWall[ty][tx] = true;
+      if (skipTiles && typeof skipTiles.add === "function") {
+        skipTiles.add(key);
+      }
+      const wx = tx * TILE_SIZE + TILE_SIZE / 2;
+      const wy = ty * TILE_SIZE + TILE_SIZE / 2;
+      this.addWall(wx, wy);
+    };
+    const segLength = Math.max(1, Math.floor((room.w + room.h) / 4) - 1);
+    if (segLength <= 0) return;
+    const horizontalStart = Phaser.Math.Clamp(
+      Math.floor(room.cx - Math.floor(segLength / 2)),
+      room.x + 1,
+      Math.max(room.x + 1, room.x + room.w - segLength - 1),
+    );
+    const verticalStart = Phaser.Math.Clamp(
+      Math.floor(room.cy - Math.floor(segLength / 2)),
+      room.y + 1,
+      Math.max(room.y + 1, room.y + room.h - segLength - 1),
+    );
+    const segments = [
+      { orientation: "horizontal", x: horizontalStart, y: room.y + 2 },
+      { orientation: "horizontal", x: horizontalStart, y: room.y + room.h - 3 },
+      { orientation: "vertical", x: room.x + 2, y: verticalStart },
+      { orientation: "vertical", x: room.x + room.w - 3, y: verticalStart },
+    ];
+    segments.forEach((segment) => {
+      for (let i = 0; i < segLength; i += 1) {
+        if (segment.orientation === "horizontal") {
+          markWall(segment.x + i, segment.y);
+        } else {
+          markWall(segment.x, segment.y + i);
+        }
+      }
+    });
+  }
+
   buildWallCollidersFromGrid(isWall, width, height) {
     if (!this.wallGroup) return;
     const visited = Array.from({ length: height }, () => Array(width).fill(false));
@@ -3300,6 +3671,59 @@ updateSpellbladeOverlays() {
     const bkey = (bx, by) => `${bx},${by}`;
     const inBlockBounds = (bx, by) => bx >= 0 && by >= 0 && bx < BLOCK_GRID && by < BLOCK_GRID;
 
+    const findEliteBranchPlacement = (selectedSet) => {
+      if (!selectedSet || selectedSet.size === 0) return null;
+      const used = new Set(selectedSet);
+      const directions = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+      ];
+      const toKey = (x, y) => `${x},${y}`;
+      const parseCoords = (key) => {
+        const [bx, by] = key.split(",").map(Number);
+        return { bx, by, key };
+      };
+      const bases = Array.from(used).map(parseCoords);
+      Phaser.Utils.Array.Shuffle(bases);
+
+      const shuffleDirections = () => {
+        const copy = directions.slice();
+        Phaser.Utils.Array.Shuffle(copy);
+        return copy;
+      };
+
+      for (const base of bases) {
+        const dirOrder = shuffleDirections();
+        for (const dir of dirOrder) {
+          const eliteX = base.bx + dir.dx;
+          const eliteY = base.by + dir.dy;
+          if (!inBlockBounds(eliteX, eliteY)) continue;
+          const eliteKey = toKey(eliteX, eliteY);
+          if (used.has(eliteKey)) continue;
+          const chestDirOrder = [{ dx: dir.dx, dy: dir.dy }]
+            .concat(dirOrder.filter((d) => d.dx !== dir.dx || d.dy !== dir.dy));
+          for (const chestDir of chestDirOrder) {
+            const chestX = eliteX + chestDir.dx;
+            const chestY = eliteY + chestDir.dy;
+            if (!inBlockBounds(chestX, chestY)) continue;
+            const chestKey = toKey(chestX, chestY);
+            if (used.has(chestKey) || chestKey === base.key) continue;
+            return {
+              baseKey: base.key,
+              eliteKey,
+              chestKey,
+              eliteCoord: { bx: eliteX, by: eliteY },
+              chestCoord: { bx: chestX, by: chestY },
+              branchDir: dir,
+            };
+          }
+        }
+      }
+      return null;
+    };
+
     // 1) 在 5x5 网格中选择 9 个连通 Block
     const centerBx = Math.floor(BLOCK_GRID / 2);
     const centerBy = Math.floor(BLOCK_GRID / 2);
@@ -3353,6 +3777,10 @@ updateSpellbladeOverlays() {
       }
     }
 
+    const eliteBranchPlacement = findEliteBranchPlacement(selected);
+    if (eliteBranchPlacement?.eliteKey) {
+      selected.add(eliteBranchPlacement.eliteKey);
+    }
     const blocks = Array.from(selected).map((s) => {
       const [bx, by] = s.split(",").map(Number);
       return { bx, by, key: s };
@@ -3381,8 +3809,9 @@ updateSpellbladeOverlays() {
       return best;
     };
 
-    const startCandidates = blocks.filter((b) => b.bx === minBx);
-    const endCandidates = blocks.filter((b) => b.bx === maxBx);
+    const eliteKey = eliteBranchPlacement?.eliteKey ?? null;
+    const startCandidates = blocks.filter((b) => b.bx === minBx && b.key !== eliteKey);
+    const endCandidates = blocks.filter((b) => b.bx === maxBx && b.key !== eliteKey);
     const startBlock = pickClosestBy(startCandidates.length ? startCandidates : blocks);
     const endBlock = pickClosestBy(
       endCandidates.length ? endCandidates : blocks.filter((b) => b.key !== startBlock.key),
@@ -3392,21 +3821,18 @@ updateSpellbladeOverlays() {
     this.endBlockKey = endBlock.key;
 
     const normalCandidates = blocks.filter(
-      (b) => b.key !== this.startBlockKey && b.key !== this.endBlockKey,
+      (b) => b.key !== this.startBlockKey && b.key !== this.endBlockKey && b.key !== eliteKey,
     );
-    let chestBlockKey = null;
     let attrShopBlockKey = null;
-    if (normalCandidates.length > 0) {
+    if (normalCandidates.length > 0 && Math.random() < 0.5) {
       const idx = Phaser.Math.Between(0, normalCandidates.length - 1);
-      const chosen = normalCandidates[idx];
-      if (Math.random() < 0.5) chestBlockKey = chosen.key;
-      else attrShopBlockKey = chosen.key;
+      attrShopBlockKey = normalCandidates[idx].key;
     }
 
     const blockMetaByKey = new Map();
     blocks.forEach((b) => {
-      const type = b.key === chestBlockKey ? "chest"
-        : b.key === attrShopBlockKey ? "attrShop"
+      const type = b.key === attrShopBlockKey ? "attrShop"
+        : (eliteKey && b.key === eliteKey) ? "elite"
           : "normal";
       const isStart = b.key === this.startBlockKey;
       const isEnd = b.key === this.endBlockKey;
@@ -3418,7 +3844,8 @@ updateSpellbladeOverlays() {
         isStart,
         isEnd,
         // 只有非起点 / 终点的普通房间才是战斗房
-        isCombat: type === "normal" && !isStart && !isEnd,
+        isCombat: (type === "normal" || type === "elite") && !isStart && !isEnd,
+        isElite: type === "elite",
         room: null,
         doors: [],
       };
@@ -3434,19 +3861,27 @@ updateSpellbladeOverlays() {
 
       let rw;
       let rh;
-      if (meta.type === "chest") {
+      if (meta.isStart || meta.isEnd) {
+        rw = 5;
+        rh = 5;
+      } else if (meta.type === "chest") {
         rw = 10;
         rh = 10;
       } else if (meta.type === "attrShop") {
         rw = 5;
         rh = 5;
+      } else if (meta.type === "elite") {
+        rw = 32;
+        rh = 32;
       } else {
         const marginMin = 6;
         const margin = Phaser.Math.Between(marginMin, marginMin + 4);
-        const maxW = Math.max(8, BLOCK_SIZE_TILES - margin * 2);
-        const maxH = Math.max(8, BLOCK_SIZE_TILES - margin * 2);
-        rw = Phaser.Math.Between(Math.max(10, maxW - 6), maxW);
-        rh = Phaser.Math.Between(Math.max(10, maxH - 6), maxH);
+        const roomSizeMin = 10;
+        const roomSizeMax = 40;
+        const maxW = Math.max(roomSizeMin, Math.min(roomSizeMax, BLOCK_SIZE_TILES - margin * 2));
+        const maxH = Math.max(roomSizeMin, Math.min(roomSizeMax, BLOCK_SIZE_TILES - margin * 2));
+        rw = Phaser.Math.Between(roomSizeMin, maxW);
+        rh = Phaser.Math.Between(roomSizeMin, maxH);
       }
 
       const blockCenterTx = baseX + Math.floor(BLOCK_SIZE_TILES / 2);
@@ -3483,9 +3918,6 @@ updateSpellbladeOverlays() {
       }
     });
 
-    this.dungeonBlocks = Array.from(blockMetaByKey.values());
-    this.dungeonBlocksByKey = blockMetaByKey;
-
     // 4) 连接各 Block 之间的通路并记录门的索引
     const selectedKeys = new Set(blocks.map((b) => b.key));
     const edges = [];
@@ -3508,6 +3940,30 @@ updateSpellbladeOverlays() {
         edges.push({ from: curKey, to: nk });
         bfsQueue.push(nk);
       });
+    }
+
+    if (visitedBlocks.size < selectedKeys.size) {
+      const allKeys = Array.from(selectedKeys);
+      let changed = true;
+      while (visitedBlocks.size < selectedKeys.size && changed) {
+        changed = false;
+        allKeys.forEach((key) => {
+          if (visitedBlocks.has(key)) return;
+          const meta = blockMetaByKey.get(key);
+          if (!meta) return;
+          const neighbors = [
+            bkey(meta.bx + 1, meta.by),
+            bkey(meta.bx - 1, meta.by),
+            bkey(meta.bx, meta.by + 1),
+            bkey(meta.bx, meta.by - 1),
+          ];
+          const attachTo = neighbors.find((nk) => selectedKeys.has(nk) && visitedBlocks.has(nk));
+          if (!attachTo) return;
+          edges.push({ from: attachTo, to: key });
+          visitedBlocks.add(key);
+          changed = true;
+        });
+      }
     }
 
     const widthFloor = isFloor[0]?.length || 0;
@@ -3554,18 +4010,15 @@ updateSpellbladeOverlays() {
       bMeta.doors.push({ doorKey, otherKey: aMeta.key, tile: doorBTile, world: door.worldB });
     };
 
-    edges.forEach((e) => {
-      const aMeta = blockMetaByKey.get(e.from);
-      const bMeta = blockMetaByKey.get(e.to);
+    const connectAdjacentRooms = (aMeta, bMeta) => {
       if (!aMeta || !bMeta) return;
       const roomA = aMeta.room;
       const roomB = bMeta.room;
       if (!roomA || !roomB) return;
 
-      if (aMeta.bx === bMeta.bx && aMeta.by + 1 === bMeta.by) {
-        // a 在上，b 在下
-        const top = aMeta;
-        const bottom = bMeta;
+      if (aMeta.bx === bMeta.bx && aMeta.by !== bMeta.by) {
+        const top = aMeta.by < bMeta.by ? aMeta : bMeta;
+        const bottom = aMeta.by < bMeta.by ? bMeta : aMeta;
         const roomTop = top.room;
         const roomBottom = bottom.room;
         const minX = Math.max(roomTop.x + 1, roomBottom.x + 1);
@@ -3576,10 +4029,48 @@ updateSpellbladeOverlays() {
         carveRect(doorTx, doorTx, Math.min(doorAy, doorBy), Math.max(doorAy, doorBy));
         this.addFloorRect(doorTx, Math.min(doorAy, doorBy), corridorWidth, Math.abs(doorBy - doorAy) + 1);
         recordDoorForBlocks(top, bottom, { x: doorTx, y: doorAy }, { x: doorTx, y: doorBy });
-      } else if (aMeta.by === bMeta.by && aMeta.bx + 1 === bMeta.bx) {
+      } else if (aMeta.by === bMeta.by && aMeta.bx !== bMeta.bx) {
+        const left = aMeta.bx < bMeta.bx ? aMeta : bMeta;
+        const right = aMeta.bx < bMeta.bx ? bMeta : aMeta;
+        const roomLeft = left.room;
+        const roomRight = right.room;
+        const minY = Math.max(roomLeft.y + 1, roomRight.y + 1);
+        const maxY = Math.min(roomLeft.y + roomLeft.h - 2, roomRight.y + roomRight.h - 2);
+        const doorTy = clampTile(Math.floor((roomLeft.cy + roomRight.cy) / 2), minY, maxY);
+        const doorLx = roomLeft.x + roomLeft.w;
+        const doorRx = roomRight.x - 1;
+        carveRect(Math.min(doorLx, doorRx), Math.max(doorLx, doorRx), doorTy, doorTy);
+        this.addFloorRect(Math.min(doorLx, doorRx), doorTy, Math.abs(doorRx - doorLx) + 1, corridorWidth);
+        recordDoorForBlocks(left, right, { x: doorLx, y: doorTy }, { x: doorRx, y: doorTy });
+      }
+    };
+
+    edges.forEach((e) => {
+      const aMeta = blockMetaByKey.get(e.from);
+      const bMeta = blockMetaByKey.get(e.to);
+      if (!aMeta || !bMeta) return;
+      const roomA = aMeta.room;
+      const roomB = bMeta.room;
+      if (!roomA || !roomB) return;
+
+      if (aMeta.bx === bMeta.bx && aMeta.by !== bMeta.by) {
+        // a 在上，b 在下
+        const top = aMeta.by < bMeta.by ? aMeta : bMeta;
+        const bottom = aMeta.by < bMeta.by ? bMeta : aMeta;
+        const roomTop = top.room;
+        const roomBottom = bottom.room;
+        const minX = Math.max(roomTop.x + 1, roomBottom.x + 1);
+        const maxX = Math.min(roomTop.x + roomTop.w - 2, roomBottom.x + roomBottom.w - 2);
+        const doorTx = clampTile(Math.floor((roomTop.cx + roomBottom.cx) / 2), minX, maxX);
+        const doorAy = roomTop.y + roomTop.h;
+        const doorBy = roomBottom.y - 1;
+        carveRect(doorTx, doorTx, Math.min(doorAy, doorBy), Math.max(doorAy, doorBy));
+        this.addFloorRect(doorTx, Math.min(doorAy, doorBy), corridorWidth, Math.abs(doorBy - doorAy) + 1);
+        recordDoorForBlocks(top, bottom, { x: doorTx, y: doorAy }, { x: doorTx, y: doorBy });
+      } else if (aMeta.by === bMeta.by && aMeta.bx !== bMeta.bx) {
         // a 在左，b 在右
-        const left = aMeta;
-        const right = bMeta;
+        const left = aMeta.bx < bMeta.bx ? aMeta : bMeta;
+        const right = aMeta.bx < bMeta.bx ? bMeta : aMeta;
         const roomLeft = left.room;
         const roomRight = right.room;
         const minY = Math.max(roomLeft.y + 1, roomRight.y + 1);
@@ -3592,6 +4083,56 @@ updateSpellbladeOverlays() {
         recordDoorForBlocks(left, right, { x: doorLx, y: doorTy }, { x: doorRx, y: doorTy });
       }
     });
+
+    if (eliteBranchPlacement?.chestKey) {
+      const chestKey = eliteBranchPlacement.chestKey;
+      if (!blockMetaByKey.has(chestKey)) {
+        const chestCoord = eliteBranchPlacement.chestCoord;
+        const baseX = chestCoord.bx * BLOCK_SIZE_TILES;
+        const baseY = chestCoord.by * BLOCK_SIZE_TILES;
+        const rw = 10;
+        const rh = 10;
+        const blockCenterTx = baseX + Math.floor(BLOCK_SIZE_TILES / 2);
+        const blockCenterTy = baseY + Math.floor(BLOCK_SIZE_TILES / 2);
+        const minRx = baseX + 2;
+        const maxRx = baseX + BLOCK_SIZE_TILES - rw - 2;
+        const minRy = baseY + 2;
+        const maxRy = baseY + BLOCK_SIZE_TILES - rh - 2;
+        let rx = blockCenterTx - Math.floor(rw / 2);
+        let ry = blockCenterTy - Math.floor(rh / 2);
+        rx = Phaser.Math.Clamp(rx, minRx, Math.max(minRx, maxRx));
+        ry = Phaser.Math.Clamp(ry, minRy, Math.max(minRy, maxRy));
+        for (let ty = ry; ty < ry + rh; ty += 1) {
+          for (let tx = rx; tx < rx + rw; tx += 1) {
+            if (ty >= 0 && tx >= 0 && ty < height && tx < width) isFloor[ty][tx] = true;
+          }
+        }
+        const cx = rx + Math.floor(rw / 2);
+        const cy = ry + Math.floor(rh / 2);
+        const room = { x: rx, y: ry, w: rw, h: rh, cx, cy };
+        const chestMeta = {
+          key: chestKey,
+          bx: chestCoord.bx,
+          by: chestCoord.by,
+          type: "chest",
+          isStart: false,
+          isEnd: false,
+          isCombat: false,
+          isElite: false,
+          room,
+          doors: [],
+        };
+        blockMetaByKey.set(chestKey, chestMeta);
+        this.addFloorRect(rx, ry, rw, rh);
+        const eliteMeta = blockMetaByKey.get(eliteKey);
+        if (eliteMeta) {
+          connectAdjacentRooms(eliteMeta, chestMeta);
+        }
+      }
+    }
+
+    this.dungeonBlocks = Array.from(blockMetaByKey.values());
+    this.dungeonBlocksByKey = blockMetaByKey;
 
     // 5) 生成墙体网格与碰撞体
     const isWall = Array.from({ length: height }, () => Array(width).fill(false));
@@ -3613,10 +4154,94 @@ updateSpellbladeOverlays() {
       }
     }
 
+    const internalCombatWallSkipTiles = new Set();
+    const internalCombatWallSprites = new Map();
+    this.decorateCombatBlocksWithInternalWalls(
+      isWall,
+      internalCombatWallSkipTiles,
+      internalCombatWallSprites,
+    );
+
+    const tileKeyFrom = (tx, ty) => `${tx},${ty}`;
+    const worldToTileCoordsFromWorld = (world) => {
+      if (!world) return null;
+      return {
+        x: clampTile(Math.floor(world.x / TILE_SIZE), 0, width - 1),
+        y: clampTile(Math.floor(world.y / TILE_SIZE), 0, height - 1),
+      };
+    };
+    const findFloorPath = (start, end) => {
+      if (!start || !end) return null;
+      if (!Array.isArray(isFloor[start.y]) || !Array.isArray(isFloor[end.y])) return null;
+      if (!isFloor[start.y][start.x] || !isFloor[end.y][end.x]) return null;
+      const visited = Array.from({ length: height }, () => Array(width).fill(false));
+      const queue = [{ x: start.x, y: start.y, prev: null }];
+      visited[start.y][start.x] = true;
+      let read = 0;
+      while (read < queue.length) {
+        const node = queue[read];
+        read += 1;
+        if (node.x === end.x && node.y === end.y) {
+          const path = [];
+          let cur = node;
+          while (cur) {
+            path.push({ x: cur.x, y: cur.y });
+            cur = cur.prev;
+          }
+          return path.reverse();
+        }
+        const adjacents = [
+          { dx: 1, dy: 0 },
+          { dx: -1, dy: 0 },
+          { dx: 0, dy: 1 },
+          { dx: 0, dy: -1 },
+        ];
+        for (let i = 0; i < adjacents.length; i += 1) {
+          const nx = node.x + adjacents[i].dx;
+          const ny = node.y + adjacents[i].dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          if (visited[ny][nx]) continue;
+          if (!isFloor[ny][nx]) continue;
+          visited[ny][nx] = true;
+          queue.push({ x: nx, y: ny, prev: node });
+        }
+      }
+      return null;
+    };
+    const openPathTiles = (path) => {
+      if (!Array.isArray(path)) return;
+      path.forEach(({ x: tileX, y: tileY }) => {
+        if (tileY < 0 || tileY >= height || tileX < 0 || tileX >= width) return;
+        if (!Array.isArray(isWall[tileY]) || !isWall[tileY][tileX]) return;
+        isWall[tileY][tileX] = false;
+        const tileKey = tileKeyFrom(tileX, tileY);
+        internalCombatWallSkipTiles.delete(tileKey);
+        const sprite = internalCombatWallSprites.get(tileKey);
+        if (sprite) {
+          internalCombatWallSprites.delete(tileKey);
+          sprite.destroy();
+          const idx = this.wallTiles.indexOf(sprite);
+          if (idx >= 0) this.wallTiles.splice(idx, 1);
+        }
+      });
+    };
+    const ensurePortalPathOpen = () => {
+      if (!this.portalRoomCenterWorld || !this.startRoomCenterWorld) return;
+      const startTile = worldToTileCoordsFromWorld(this.startRoomCenterWorld);
+      const endTile = worldToTileCoordsFromWorld(this.portalRoomCenterWorld);
+      const path = findFloorPath(startTile, endTile);
+      if (path && path.length) {
+        openPathTiles(path);
+      }
+    };
+    ensurePortalPathOpen();
+
     const half = TILE_SIZE / 2;
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         if (!isWall[y][x]) continue;
+        const tileKey = `${x},${y}`;
+        if (internalCombatWallSkipTiles.has(tileKey)) continue;
         const frame = this.getDungeonWallFrame(x, y, isFloor);
         const wx = x * TILE_SIZE + half;
         const wy = y * TILE_SIZE + half;
@@ -3629,6 +4254,7 @@ updateSpellbladeOverlays() {
     this.wallGrid = isWall.map((row) => row.slice());
     this.floorGrid = isFloor.map((row) => row.slice());
     this.buildWallCollidersFromGrid(this.wallGrid, width, height);
+    this.rebuildMinimapFromDungeon();
   }
 
   worldToTileCoords(worldX, worldY) {
@@ -3711,9 +4337,19 @@ updateSpellbladeOverlays() {
     }
 
     const rankValue = Math.max(1, Math.floor(this.rank || 1));
-    const wavesTotal = Math.max(1, Math.floor(rankValue / 5));
-    const enemiesPerWave = Math.max(1, Math.round(rankValue * 2));
-    const totalEnemies = wavesTotal * enemiesPerWave;
+    const wavesTotal = Math.max(1, Math.floor(rankValue / 2 - 3));
+    const enemiesPerWave = Math.max(1, Math.floor(rankValue / 2));
+    const waves = this.buildDungeonBattleWaves(rankValue, wavesTotal, enemiesPerWave, blockInfo);
+    const totalEnemies = waves.reduce((sum, wave) => sum + (wave?.total ?? 0), 0);
+
+    if (totalEnemies <= 0) {
+      // Nothing to spawn, end battle immediately.
+      blockInfo.isCombat = false;
+      this.openDoorsForBlock(blockInfo.key);
+      this.activeBattle = null;
+      if (typeof this.updateMissionUI === "function") this.updateMissionUI();
+      return;
+    }
 
     this.activeBattle = {
       blockKey: blockInfo.key,
@@ -3722,15 +4358,15 @@ updateSpellbladeOverlays() {
       wavesTotal,
       enemiesPerWave,
       spawnedCount: 0,
+      waves,
+      currentWaveIndex: 0,
+      currentWaveSpawnIndex: 0,
+      waveAliveCount: 0,
+      currentWaveSpawnCompleted: false,
       spawnTimer: null,
     };
 
-    const spawnIntervalMs = 500;
-    this.activeBattle.spawnTimer = this.time.addEvent({
-      delay: spawnIntervalMs,
-      loop: true,
-      callback: () => this.spawnDungeonBattleEnemy(blockInfo),
-    });
+    this.startDungeonBattleWave(blockInfo);
 
     if (typeof this.updateMissionUI === "function") this.updateMissionUI();
   }
@@ -3755,17 +4391,28 @@ updateSpellbladeOverlays() {
 
   spawnDungeonBattleEnemy(blockInfo) {
     const battle = this.activeBattle;
-    if (!battle || !blockInfo || battle.blockKey !== blockInfo.key) return;
-    if (battle.spawnedCount >= battle.totalEnemies) {
-      if (battle.spawnTimer) {
-        battle.spawnTimer.remove(false);
-        battle.spawnTimer = null;
-      }
+    if (!battle) return;
+    if (!blockInfo) blockInfo = this.dungeonBlocksByKey?.get(battle.blockKey);
+    if (!blockInfo || battle.blockKey !== blockInfo.key) return;
+
+    const wave = battle.waves?.[battle.currentWaveIndex];
+    if (!wave) {
+      this.finishCurrentWaveSpawning();
       return;
     }
 
-    const spawnDef = this.pickEnemySpawnDefinition();
-    if (!spawnDef) return;
+    if (!Number.isFinite(battle.currentWaveSpawnIndex)) battle.currentWaveSpawnIndex = 0;
+    if (battle.currentWaveSpawnIndex >= wave.total) {
+      this.finishCurrentWaveSpawning();
+      return;
+    }
+
+    const spawnDef = wave.spawnDefs[battle.currentWaveSpawnIndex];
+    if (!spawnDef) {
+      battle.currentWaveSpawnIndex += 1;
+      return;
+    }
+
     const room = blockInfo.room;
     const pos = this.findEnemySpawnPositionInRoom(spawnDef, room) || this.findEnemySpawnPosition(spawnDef);
     if (!pos) return;
@@ -3773,6 +4420,275 @@ updateSpellbladeOverlays() {
     spawnDef.battleBlockKey = blockInfo.key;
     this.spawnEnemyWithEffect(spawnDef, pos);
     battle.spawnedCount += 1;
+    battle.currentWaveSpawnIndex += 1;
+    battle.waveAliveCount += 1;
+
+    if (battle.currentWaveSpawnIndex >= wave.total) {
+      this.finishCurrentWaveSpawning();
+    }
+  }
+
+  startDungeonBattleWave(blockInfo, intervalMs = 500) {
+    const battle = this.activeBattle;
+    if (!battle) return;
+    const resolvedBlock = blockInfo || this.dungeonBlocksByKey?.get(battle.blockKey);
+    if (!resolvedBlock) return;
+
+    const wave = battle.waves?.[battle.currentWaveIndex];
+    if (!wave) return;
+    if (wave.total <= 0) {
+      battle.currentWaveSpawnCompleted = true;
+      if (battle.currentWaveIndex < (battle.waves?.length ?? 0) - 1) {
+        battle.currentWaveIndex += 1;
+        this.startDungeonBattleWave(resolvedBlock, intervalMs);
+      }
+      return;
+    }
+
+    if (battle.spawnTimer) {
+      battle.spawnTimer.remove(false);
+      battle.spawnTimer = null;
+    }
+
+    battle.currentWaveSpawnIndex = 0;
+    battle.waveAliveCount = 0;
+    battle.currentWaveSpawnCompleted = false;
+    battle.spawnTimer = this.time.addEvent({
+      delay: intervalMs,
+      loop: true,
+      callback: () => this.spawnDungeonBattleEnemy(resolvedBlock),
+    });
+  }
+
+  finishCurrentWaveSpawning() {
+    const battle = this.activeBattle;
+    if (!battle) return;
+    battle.currentWaveSpawnCompleted = true;
+    if (battle.spawnTimer) {
+      battle.spawnTimer.remove(false);
+      battle.spawnTimer = null;
+    }
+  }
+
+  maybeAdvanceDungeonBattleWave(blockInfo = null) {
+    const battle = this.activeBattle;
+    if (!battle) return;
+    const waves = battle.waves;
+    if (!Array.isArray(waves) || waves.length === 0) return;
+    if (battle.currentWaveIndex >= waves.length - 1) return;
+    if (battle.waveAliveCount > 0) return;
+    if (!battle.currentWaveSpawnCompleted) return;
+    battle.currentWaveIndex += 1;
+    this.startDungeonBattleWave(blockInfo, 500);
+  }
+
+  buildDungeonBattleWaves(_rankValue, wavesTotal, enemiesPerWave, blockInfo) {
+    const waveCount = Math.max(1, wavesTotal | 0);
+    const perWave = Math.max(1, enemiesPerWave | 0);
+    const unlockedRarities = this.getUnlockedEnemyRaritiesForBattle();
+    const eliteRarity = this.getEliteEnemyRarityForBattle(unlockedRarities);
+    const isEliteRoom = !!blockInfo?.isElite;
+    const waves = [];
+
+    for (let waveIndex = 0; waveIndex < waveCount; waveIndex += 1) {
+      const isEliteWave = waveIndex === waveCount - 1;
+      const spawnDefs = isEliteRoom && isEliteWave
+        ? this.buildEliteWaveSpawnDefs(perWave, unlockedRarities, eliteRarity)
+        : this.buildNormalWaveSpawnDefs(perWave, unlockedRarities);
+      const validDefs = Array.isArray(spawnDefs) ? spawnDefs : [];
+      waves.push({ spawnDefs: validDefs, total: validDefs.length });
+    }
+
+    return waves;
+  }
+
+  getUnlockedEnemyRaritiesForBattle() {
+    const levelValue = Math.max(1, Math.floor(this.level || 1));
+    const rarities = [ENEMY_RARITIES.BASIC];
+    if (levelValue > 2) rarities.push(ENEMY_RARITIES.MID);
+    if (levelValue > 5) rarities.push(ENEMY_RARITIES.EPIC);
+    if (levelValue > 10) rarities.push(ENEMY_RARITIES.LEGENDARY);
+    return rarities;
+  }
+
+  getEliteEnemyRarityForBattle(unlockedRarities) {
+    const list = (Array.isArray(unlockedRarities) && unlockedRarities.length > 0)
+      ? unlockedRarities
+      : [ENEMY_RARITIES.BASIC];
+    let maxIndex = 0;
+    for (let i = 0; i < list.length; i += 1) {
+      const idx = ENEMY_RARITY_SEQUENCE.indexOf(list[i]);
+      if (idx > maxIndex) maxIndex = idx;
+    }
+    const eliteIndex = Math.min(ENEMY_RARITY_SEQUENCE.length - 1, maxIndex + 1);
+    return ENEMY_RARITY_SEQUENCE[eliteIndex];
+  }
+
+  splitDungeonWaveCounts(total) {
+    const count = Math.max(1, total | 0);
+    let chargers = Math.round(count * 0.6);
+    let casters = Math.round(count * 0.2);
+    let turrets = count - chargers - casters;
+
+    if (casters <= 0) {
+      casters = 1;
+      if (chargers >= turrets && chargers > 0) {
+        chargers -= 1;
+      } else if (turrets > 0) {
+        turrets -= 1;
+      }
+    }
+
+    if (turrets < 0) {
+      chargers = Math.max(0, chargers + turrets);
+      turrets = 0;
+    }
+
+    const sum = chargers + casters + turrets;
+    if (sum !== count) {
+      chargers = Math.max(0, chargers + (count - sum));
+    }
+
+    return { charger: chargers, caster: casters, turret: turrets };
+  }
+
+  buildNormalWaveSpawnDefs(enemiesPerWave, unlockedRarities) {
+    const total = Math.max(1, enemiesPerWave | 0);
+    const counts = this.splitDungeonWaveCounts(total);
+    const result = [];
+
+    for (let i = 0; i < counts.charger; i += 1) {
+      const def = this.buildSpawnDefForKindAndRarities("charger", unlockedRarities);
+      if (def) result.push(def);
+    }
+    for (let i = 0; i < counts.caster; i += 1) {
+      const def = this.buildSpawnDefForKindAndRarities("caster", unlockedRarities);
+      if (def) result.push(def);
+    }
+    for (let i = 0; i < counts.turret; i += 1) {
+      const def = this.buildSpawnDefForKindAndRarities("turret", unlockedRarities);
+      if (def) result.push(def);
+    }
+
+    if (typeof Phaser !== "undefined" && Phaser.Utils && Phaser.Utils.Array && Phaser.Utils.Array.Shuffle) {
+      Phaser.Utils.Array.Shuffle(result);
+    }
+
+    return result;
+  }
+
+  buildEliteWaveSpawnDefs(enemiesPerWave, unlockedRarities, eliteRarity) {
+    const total = Math.max(1, enemiesPerWave | 0);
+    const result = [];
+    const normalCount = Math.max(0, total - 1);
+
+    if (normalCount > 0) {
+      const normalSpawns = this.buildNormalWaveSpawnDefs(normalCount, unlockedRarities);
+      if (Array.isArray(normalSpawns)) {
+        for (let i = 0; i < normalSpawns.length; i += 1) {
+          if (normalSpawns[i]) result.push(normalSpawns[i]);
+        }
+      }
+    }
+
+    const eliteDef = this.buildEliteSpawnDef(eliteRarity);
+    if (eliteDef) result.push(eliteDef);
+
+    if (typeof Phaser !== "undefined" && Phaser.Utils && Phaser.Utils.Array && Phaser.Utils.Array.Shuffle) {
+      Phaser.Utils.Array.Shuffle(result);
+    }
+
+    return result;
+  }
+
+  pickEnemyTypeByKind(kind) {
+    const entries = [];
+    Object.entries(ENEMY_TYPE_CONFIG).forEach(([typeKey, typeConfig]) => {
+      if (!typeConfig || typeConfig.kind !== kind) return;
+      const weight = Number.isFinite(typeConfig.weight) ? Math.max(typeConfig.weight, 0) : 0;
+      entries.push({ key: typeKey, config: typeConfig, weight: weight || 1 });
+    });
+    if (entries.length === 0) return null;
+    return this.pickWeightedEntry(entries) || entries[0];
+  }
+
+  pickTierForTypeFromRarities(typeConfig, rarities) {
+    if (!typeConfig || !typeConfig.tiers) return null;
+    const list = (Array.isArray(rarities) && rarities.length > 0)
+      ? rarities
+      : [ENEMY_RARITIES.BASIC];
+    const entries = [];
+    for (let i = 0; i < list.length; i += 1) {
+      const key = list[i];
+      const tierConfig = typeConfig.tiers[key];
+      if (!tierConfig) continue;
+      const weight = Number.isFinite(ENEMY_RARITY_WEIGHTS[key]) ? Math.max(ENEMY_RARITY_WEIGHTS[key], 0) : 0;
+      if (weight <= 0) continue;
+      entries.push({ key, config: tierConfig, weight });
+    }
+    if (entries.length === 0) return null;
+    return this.pickWeightedEntry(entries);
+  }
+
+  buildSpawnDefForKindAndRarities(kind, unlockedRarities) {
+    const typeEntry = this.pickEnemyTypeByKind(kind);
+    if (!typeEntry) return null;
+    const tierEntry = this.pickTierForTypeFromRarities(typeEntry.config, unlockedRarities);
+    if (!tierEntry) return null;
+    return {
+      typeKey: typeEntry.key,
+      typeConfig: typeEntry.config,
+      tierKey: tierEntry.key,
+      tierConfig: tierEntry.config,
+      isElite: false,
+    };
+  }
+
+  buildEliteSpawnDef(eliteRarity) {
+    const roll = Phaser.Math.FloatBetween(0, 1);
+    let kind = "charger";
+    if (roll < 0.6) {
+      kind = "charger";
+    } else if (roll < 0.8) {
+      kind = "caster";
+    } else {
+      kind = "turret";
+    }
+
+    const typeEntry = this.pickEnemyTypeByKind(kind);
+    if (!typeEntry || !typeEntry.config || !typeEntry.config.tiers) return null;
+
+    const typeConfig = typeEntry.config;
+    let tierKey = eliteRarity;
+    let baseTierConfig = typeConfig.tiers[tierKey] || null;
+
+    if (!baseTierConfig) {
+      for (let i = ENEMY_RARITY_SEQUENCE.length - 1; i >= 0; i -= 1) {
+        const key = ENEMY_RARITY_SEQUENCE[i];
+        if (typeConfig.tiers[key]) {
+          tierKey = key;
+          baseTierConfig = typeConfig.tiers[key];
+          break;
+        }
+      }
+    }
+
+    if (!baseTierConfig) return null;
+
+    const eliteConfig = { ...baseTierConfig };
+    const baseScale = Number.isFinite(eliteConfig.scale) ? eliteConfig.scale : 1;
+    eliteConfig.scale = baseScale * ELITE_SCALE_MULTIPLIER;
+    if (Number.isFinite(eliteConfig.hitRadius)) {
+      eliteConfig.hitRadius = Math.max(1, Math.round(eliteConfig.hitRadius * ELITE_SCALE_MULTIPLIER));
+    }
+
+    return {
+      typeKey: typeEntry.key,
+      typeConfig,
+      tierKey,
+      tierConfig: eliteConfig,
+      isElite: true,
+    };
   }
 
   findEnemySpawnPositionInRoom(spawnDef, room) {
@@ -3807,9 +4723,188 @@ updateSpellbladeOverlays() {
     this.currentBlockKey = newKey;
     this.currentBlockInsideRoom = insideRoom;
 
-    if (block && insideRoom && block.isCombat) {
-      this.startDungeonBattle(block);
+    if (block && insideRoom) {
+      this.markMinimapBlockVisited(block.key);
+      if (block.isCombat) {
+        this.startDungeonBattle(block);
+      }
     }
+    // Refresh overlays even if no new visit happened.
+    this.updateMinimapRoomOverlays();
+  }
+
+  getMinimapRoomSpriteKey(block) {
+    if (!block) return null;
+    if (block.isStart) return "home";
+    if (block.type === "chest") return "chest";
+    if (block.type === "attrShop") return "shop";
+    if (block.isElite) return "elite";
+    if (block.isEnd) return "empty";
+    if (block.isCombat) return "fight";
+    return "empty";
+  }
+
+  setMinimapCellBaseImage(cell, iconName) {
+    if (!cell || !cell.style) return;
+    if (iconName) {
+      cell.style.setProperty("--minimap-base-image", `url("assets/minimap/${iconName}.png")`);
+    } else {
+      cell.style.removeProperty("--minimap-base-image");
+    }
+  }
+
+  setMinimapCellOverlay(cell, overlayName) {
+    if (!cell || !cell.style) return;
+    if (overlayName) {
+      cell.style.setProperty("--minimap-overlay-image", `url("assets/minimap/${overlayName}.png")`);
+    } else {
+      cell.style.removeProperty("--minimap-overlay-image");
+    }
+  }
+
+  updateMinimapRoomOverlays() {
+    if (!this.minimap || !this.minimap.roomCellsByBlockKey) return;
+    const visited = this.minimap.visitedBlocks ?? new Set();
+    const currentKey = this.currentBlockKey;
+    const showCurrent = !!currentKey && this.currentBlockInsideRoom;
+    this.minimap.roomCellsByBlockKey.forEach((record, blockKey) => {
+      const cell = record?.cell;
+      if (!cell) return;
+      if (!visited.has(blockKey)) {
+        this.setMinimapCellOverlay(cell, null);
+        return;
+      }
+      const overlayName = blockKey === currentKey && showCurrent ? "current" : "passed";
+      this.setMinimapCellOverlay(cell, overlayName);
+    });
+  }
+
+  resetMinimapGrid() {
+    if (!this.ui || !this.ui.minimapGrid) return;
+    const gridEl = this.ui.minimapGrid;
+    while (gridEl.firstChild) gridEl.removeChild(gridEl.firstChild);
+
+    const gridSize = Math.max(1, BLOCK_GRID * 2 - 1);
+    const cells = [];
+    for (let row = 0; row < gridSize; row += 1) {
+      const rowCells = [];
+      for (let col = 0; col < gridSize; col += 1) {
+        const cell = document.createElement("div");
+        cell.className = "minimap-cell";
+        gridEl.appendChild(cell);
+        rowCells.push(cell);
+      }
+      cells.push(rowCells);
+    }
+
+    this.minimap = {
+      gridSize,
+      cells,
+      roomCellsByBlockKey: new Map(),
+      visitedBlocks: new Set(),
+    };
+  }
+
+  rebuildMinimapFromDungeon() {
+    if (!this.ui || !this.ui.minimapGrid) return;
+
+    this.resetMinimapGrid();
+    if (!this.minimap) return;
+
+    if (USE_ARCADE_MODE || this.isBossStage) {
+      return;
+    }
+
+    const blocks = Array.isArray(this.dungeonBlocks) ? this.dungeonBlocks : [];
+    if (!blocks.length) return;
+
+    const { gridSize, cells, roomCellsByBlockKey } = this.minimap;
+    if (!cells || !cells.length || !roomCellsByBlockKey) return;
+    const rawMinBx = blocks.reduce((minValue, block) => {
+      if (typeof block?.bx === "number") {
+        return Math.min(minValue, block.bx);
+      }
+      return minValue;
+    }, Number.POSITIVE_INFINITY);
+    const columnOffset = Number.isFinite(rawMinBx) ? rawMinBx : 0;
+
+    // Place rooms as empty before they are visited.
+    blocks.forEach((block) => {
+      if (typeof block.bx !== "number" || typeof block.by !== "number") return;
+      const row = block.by * 2;
+      const col = (block.bx - columnOffset) * 2;
+      if (row < 0 || col < 0 || row >= gridSize || col >= gridSize) return;
+      const cell = cells[row]?.[col];
+      if (!cell) return;
+      const baseIcon = "empty";
+      this.setMinimapCellBaseImage(cell, baseIcon);
+      roomCellsByBlockKey.set(block.key, { cell, row, col });
+    });
+
+    // Place corridors between connected blocks.
+    if (this.dungeonDoors && typeof this.dungeonDoors.forEach === "function") {
+      this.dungeonDoors.forEach((door) => {
+        if (!door || !Array.isArray(door.blocks) || door.blocks.length < 2) return;
+        const [keyA, keyB] = door.blocks;
+        if (!this.dungeonBlocksByKey || typeof this.dungeonBlocksByKey.get !== "function") return;
+        const a = this.dungeonBlocksByKey.get(keyA);
+        const b = this.dungeonBlocksByKey.get(keyB);
+        if (!a || !b) return;
+
+        let row = -1;
+        let col = -1;
+        let iconName = null;
+
+        if (a.bx === b.bx && a.by !== b.by) {
+          // Vertical connection.
+          const byMin = Math.min(a.by, b.by);
+          row = byMin * 2 + 1;
+          col = (a.bx - columnOffset) * 2;
+          iconName = "vertical";
+        } else if (a.by === b.by && a.bx !== b.bx) {
+          // Horizontal connection.
+          const bxMin = Math.min(a.bx, b.bx);
+          row = a.by * 2;
+          col = (bxMin - columnOffset) * 2 + 1;
+          iconName = "horizontal";
+        }
+
+        if (!iconName) return;
+        if (row < 0 || col < 0 || row >= gridSize || col >= gridSize) return;
+        const cell = cells[row]?.[col];
+        if (!cell) return;
+        this.setMinimapCellBaseImage(cell, iconName);
+      });
+    }
+
+    // Mark starting block as visited immediately.
+    if (this.startBlockKey) {
+      this.markMinimapBlockVisited(this.startBlockKey, true);
+    }
+  }
+
+  markMinimapBlockVisited(blockKey, force) {
+    if (!this.minimap || !this.minimap.roomCellsByBlockKey) return;
+    if (!blockKey) return;
+    if (!this.dungeonBlocksByKey || typeof this.dungeonBlocksByKey.get !== "function") return;
+
+    if (!this.minimap.visitedBlocks) this.minimap.visitedBlocks = new Set();
+    if (!force && this.minimap.visitedBlocks.has(blockKey)) {
+      this.updateMinimapRoomOverlays();
+      return;
+    }
+
+    const block = this.dungeonBlocksByKey.get(blockKey);
+    if (!block) return;
+    this.minimap.visitedBlocks.add(blockKey);
+
+    const record = this.minimap.roomCellsByBlockKey.get(blockKey);
+    const cell = record?.cell;
+    if (!cell) return;
+
+    const iconName = this.getMinimapRoomSpriteKey(block);
+    this.setMinimapCellBaseImage(cell, iconName);
+    this.updateMinimapRoomOverlays();
   }
 
   spawnDungeonPlaces() {
@@ -4336,12 +5431,6 @@ updateSpellbladeOverlays() {
     this.physics.add.overlap(this.qTalismans, this.enemies, this.handleQTalismanEnemyOverlap, null, this);
 
     // 玩家子弹撞墙：生成小爆炸特效并销毁子弹
-    if (this.wallGroup) {
-      this.physics.add.collider(this.bullets, this.wallGroup, (bullet, _wall) => {
-        if (bullet && bullet.active) this.spawnWallHitExplosion(bullet.x, bullet.y);
-        this.destroyBullet(bullet);
-      });
-    }
     if (this.doorBlocksGroup) {
       this.physics.add.collider(this.bullets, this.doorBlocksGroup, (bullet, _block) => {
         if (bullet && bullet.active) this.spawnWallHitExplosion(bullet.x, bullet.y);
@@ -4917,6 +6006,7 @@ this.updateMikoOrbs(delta);
 
   // —— Q施法范围：按下Q开始瞄准（显示扇形+近战圆），抬起Q后释放 —— //
   startQAiming() {
+    if (true) return;
     if (this.qAiming) return;
     if (this.isGameplaySuspended && this.isGameplaySuspended()) return;
     this.qAiming = true;
@@ -4936,6 +6026,7 @@ this.updateMikoOrbs(delta);
   }
 
   finishQAiming() {
+    if (true) return;
     if (!this.qAiming) return;
     if (this.isGameplaySuspended && this.isGameplaySuspended()) { this.qAiming = false; if (this.qAimGraphics) this.qAimGraphics.clear(); return; }
     this.qAiming = false;
@@ -5145,6 +6236,8 @@ onSpellCastComplete() {
 }
 
 canCast(key) {
+  // Temporarily only allow E; Q/R/SPACE are reserved for future loadouts.
+  if (key !== "E") return false;
   // Block all casting while gameplay is suspended (pause/shop/game over/round UI)
   if (this.isGameplaySuspended && this.isGameplaySuspended()) return false;
   const now = this.time.now;
@@ -5388,7 +6481,11 @@ updateEnemies() {
     if (this.roundComplete || !this.nextNoDamageRankCheck) return;
     if (this.time.now >= this.nextNoDamageRankCheck) {
       this.rank = Number((this.rank * RANK_NO_DAMAGE_MULTIPLIER).toFixed(2));
-      this.scheduleSpawnTimer();
+      // Only reschedule the global spawn timer in arcade mode.
+      // In dungeon mode enemies should only spawn inside combat rooms.
+      if (USE_ARCADE_MODE) {
+        this.scheduleSpawnTimer();
+      }
       this.updateHUD();
       this.nextNoDamageRankCheck += NO_DAMAGE_RANK_INTERVAL;
     }
@@ -7927,70 +9024,65 @@ consumeSpellbladeIfReady(enemy) {
     if (enemy.isChest) {
       this.handleChestDeathRewards(enemy);
     } else {
-      this.maybeDropPoint(enemy.x, enemy.y);
+      this.maybeDropPoint(enemy);
     }
     if (enemy.battleBlockKey && this.activeBattle && this.activeBattle.blockKey === enemy.battleBlockKey) {
       const battle = this.activeBattle;
       battle.remainingEnemies = Math.max(0, (battle.remainingEnemies || 0) - 1);
+      if (battle.waveAliveCount > 0) {
+        battle.waveAliveCount = Math.max(0, battle.waveAliveCount - 1);
+      }
       if (typeof this.updateMissionUI === "function") this.updateMissionUI();
       if (battle.remainingEnemies <= 0 &&
           (!battle.spawnTimer || battle.spawnedCount >= battle.totalEnemies)) {
         this.endDungeonBattle(battle.blockKey);
+      } else {
+        this.maybeAdvanceDungeonBattleWave(this.dungeonBlocksByKey?.get(battle.blockKey));
       }
     }
-  if (enemy.ringSprite) {
-  enemy.ringSprite.destroy();
-  enemy.ringSprite = null;
-}
-if (enemy.isBoss) {
-  this.time.delayedCall(260, () => enemy.destroy());
-}
+    if (enemy.ringSprite) {
+      enemy.ringSprite.destroy();
+      enemy.ringSprite = null;
+    }
+    if (enemy.isBoss) {
+      this.time.delayedCall(260, () => enemy.destroy());
+    }
 
   }
 
-/* 按敌人 tier 的 dropRange（min/max）生成总点数，并拆成较多的拾取物（更分散的显示） */
+/* Drop a single pickup whose amount exactly matches the tier dropRange. */
 maybeDropPoint(enemyOrX, maybeY) {
-  let x, y, range;
-  if (typeof enemyOrX === "object") {
+  let x;
+  let y;
+  let range;
+  if (enemyOrX && typeof enemyOrX === "object") {
     const e = enemyOrX;
-    x = e.x; y = e.y;
+    x = e.x;
+    y = e.y;
     const r = e.dropRange ?? { min: 5, max: 15 };
-    range = { min: Math.max(0, r.min|0), max: Math.max(0, r.max|0) };
+    range = { min: Math.max(0, r.min | 0), max: Math.max(0, r.max | 0) };
   } else {
-    x = enemyOrX; y = maybeY;
-    range = { min: 5, max: 15 }; 
+    x = enemyOrX;
+    y = maybeY;
+    range = { min: 5, max: 15 };
   }
+  range.max = Math.max(range.max, range.min);
 
-  // 总点数
   const total = Phaser.Math.Between(range.min, range.max);
   if (total <= 0) return;
 
-  // 显示更多的掉落点：按总额自适应拆分，最高不超过 total
-  const pieces = Phaser.Math.Clamp(Math.ceil(total / 5), 3, Math.min(12, total));
-  // 保证每份至少有1点
-  const base = Math.max(1, Math.floor(total / pieces));
-  // 剩余点数
-  let remaining = total;
+  const ang = Phaser.Math.FloatBetween(0, Math.PI * 2);
+  const dist = Phaser.Math.FloatBetween(6, 22);
+  const dropX = x + Math.cos(ang) * dist;
+  const dropY = y + Math.sin(ang) * dist;
 
-  for (let i = 0; i < pieces; i += 1) {
-    // 最后一份拿走所有剩余点数
-    const amount = (i === pieces - 1) ? remaining : Math.max(1, Math.min(base, remaining - (pieces - 1 - i))); // 避免最后为负
-    remaining -= amount;
-
-    const ang = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    const dist = Phaser.Math.FloatBetween(6, 22);
-    const dropX = x + Math.cos(ang) * dist;
-    const dropY = y + Math.sin(ang) * dist;
-
-    const point = this.loot.create(dropX, dropY, "point");
-    point.setDepth(5);
-    point.body.setAllowGravity(false);
-    point.body.setDrag(600, 600);
-    point.magnetActive = false;
-    point.amount = amount;
-    // 击杀回蓝：总计 1 点法力值，按碎片等额分配
-    point.manaGain = 1 / pieces;
-  }
+  const point = this.loot.create(dropX, dropY, "point");
+  point.setDepth(5);
+  point.body.setAllowGravity(false);
+  point.body.setDrag(600, 600);
+  point.magnetActive = false;
+  point.amount = total;
+  point.manaGain = 1;
 }
   // 宝箱：击杀后奖励
   // 1) 掉落200点（掉落物）40%
